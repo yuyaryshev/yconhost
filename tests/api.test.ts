@@ -49,10 +49,11 @@ describe("HTTP API", () => {
 
     factory.sessions[0].push("hello\r\n");
     factory.sessions[0].push("\x1b[31merror happened\x1b[0m\r\n");
+    factory.sessions[0].push("still running\r\n");
 
     const list = await request(app).get("/api/consoles").expect(200);
     expect(list.body.consoles).toHaveLength(1);
-    expect(list.body.consoles[0].unseenErrorCount).toBeGreaterThan(0);
+    expect(list.body.consoles[0].unseenErrorCount).toBe(2);
 
     const snapshot = await request(app).get(`/api/consoles/${created.body.id}`).expect(200);
     expect(snapshot.body.outputTail).toContain("hello");
@@ -64,7 +65,7 @@ describe("HTTP API", () => {
     const output = await request(app).get(`/api/consoles/${created.body.id}/output`).expect(200);
     expect(output.body.output).toContain("hello");
 
-    const tail = await request(app).get(`/api/consoles/${created.body.id}/output?tailLines=1`).expect(200);
+    const tail = await request(app).get(`/api/consoles/${created.body.id}/output?tailLines=2`).expect(200);
     expect(tail.body.output).toContain("error happened");
 
     await request(app).post(`/api/consoles/${created.body.id}/input`).send({ data: "dir\r" }).expect(200);

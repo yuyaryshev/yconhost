@@ -219,8 +219,8 @@ export class ConsoleManager {
     const item = this.requireConsole(id);
     this.logs.append(id, chunk);
     item.tail = (item.tail + chunk).slice(-this.settings.log.scrollbackBytes);
-    const trackerTail = item.tail.slice(-this.settings.log.trackerTailChars);
-    const result = analyzeOutput(trackerTail, item.record.ansiParserEnabled, item.record.errorCount);
+    const trackerInput = chunk.slice(-this.settings.log.trackerTailChars);
+    const result = analyzeOutput(trackerInput, item.record.ansiParserEnabled, item.record.errorCount);
     const delta = result.errorCount - item.record.errorCount;
     item.record.errorCount = result.errorCount;
     item.record.unseenErrorCount += Math.max(0, delta);
