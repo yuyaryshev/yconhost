@@ -138,12 +138,27 @@ h2 {
 }
 
 .toolbar p {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   max-width: 52vw;
+  color: #62707b;
+  font-size: 12px;
+}
+
+.toolbar p > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #62707b;
-  font-size: 12px;
+}
+
+.meta-pill {
+  border: 1px solid #c5ced6;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: #f6f8fa;
+  color: #2f3a43;
 }
 
 .toolbar-actions {

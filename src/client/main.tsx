@@ -19,6 +19,9 @@ type ConsoleRecord = {
   errorCount: number;
   unseenErrorCount: number;
   attached: boolean;
+  pid?: number;
+  hostPid?: number;
+  vanillaWindowHandle?: number;
 };
 
 function App() {
@@ -171,7 +174,11 @@ function TerminalPane({ consoleRecord, onChanged }: { consoleRecord: ConsoleReco
       <header className="toolbar">
         <div>
           <h2>{consoleRecord.name}</h2>
-          <p>{consoleRecord.cwd}</p>
+          <p>
+            <span>{consoleRecord.cwd}</span>
+            {consoleRecord.pid ? <span className="meta-pill">PID {consoleRecord.pid}</span> : null}
+            {consoleRecord.hostPid ? <span className="meta-pill">conhost {consoleRecord.hostPid}</span> : null}
+          </p>
         </div>
         <div className="toolbar-actions">
           <button onClick={() => post("vanilla", { visible: !consoleRecord.vanillaVisible })}>{consoleRecord.vanillaVisible ? "Hide vanilla" : "Show vanilla"}</button>
