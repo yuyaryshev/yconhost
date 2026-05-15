@@ -123,6 +123,9 @@ function TerminalPane({ consoleRecord, onChanged }: { consoleRecord: ConsoleReco
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(hostRef.current!);
+    const helperTextarea = hostRef.current?.querySelector(".xterm-helper-textarea");
+    helperTextarea?.setAttribute("id", `terminal-input-${consoleRecord.id}`);
+    helperTextarea?.setAttribute("name", "terminalInput");
     fit.fit();
     terminalRef.current = terminal;
 
