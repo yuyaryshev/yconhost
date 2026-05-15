@@ -28,6 +28,8 @@ yconhost is a local web UI/API for supervising host consoles. It keeps the real 
 
 The production pm2 config is in `ecosystem.config.cjs` and currently binds to `127.0.0.1:4010` because port `4000` is already used on this host.
 
+`ecosystem.config.cjs` currently enables `YCONHOST_TERMINAL_BACKEND=visible-window`. This temporary Windows backend starts a normal visible console window immediately instead of a headless ConPTY session. While this mode is enabled, Web UI terminal streaming/input for newly created consoles is intentionally limited.
+
 ## API
 
 - `GET /api/health`

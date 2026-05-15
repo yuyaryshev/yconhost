@@ -28,6 +28,8 @@ yconhost - локальный Web UI/API для управления консо�
 
 Production-конфиг pm2 находится в `ecosystem.config.cjs` и сейчас слушает `127.0.0.1:4010`, потому что порт `4000` на этом хосте уже занят.
 
+В `ecosystem.config.cjs` сейчас включен `YCONHOST_TERMINAL_BACKEND=visible-window`. Это временный Windows backend, который сразу запускает обычное видимое окно консоли вместо headless ConPTY session. Пока этот режим включен, streaming/input терминала через Web UI для новых консолей намеренно ограничены.
+
 ## API
 
 - `GET /api/health`

@@ -58,6 +58,7 @@ export interface AppSettings {
   port: number;
   dataDir: string;
   defaultShell: string;
+  terminalBackend: "conpty" | "visible-window";
   log: {
     maxBytes: number;
     rotateFiles: number;

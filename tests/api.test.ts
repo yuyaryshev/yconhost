@@ -17,6 +17,7 @@ function testSettings(dataDir: string): AppSettings {
     port: 0,
     dataDir,
     defaultShell: "powershell.exe",
+    terminalBackend: "conpty",
     log: {
       maxBytes: 1024 * 1024,
       rotateFiles: 2,

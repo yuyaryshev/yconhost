@@ -98,6 +98,8 @@ export class ConsoleManager {
     record.pid = session.pid;
     record.status = "running";
     record.attached = true;
+    record.vanillaVisible = session.vanillaVisible ?? false;
+    record.mode = session.vanillaVisible ? "manual" : "managed";
     const managed: ManagedConsole = { record, session, tail: this.logs.read(id).slice(-this.settings.log.scrollbackBytes) };
     this.consoles.set(id, managed);
     this.persist();
