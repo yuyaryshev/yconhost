@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:server": "tsx watch src/server/index.ts",
     "build": "tsc -p tsconfig.json && vite build",
-    "start": "node dist/server/index.js",
+    "start": "node dist/src/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"

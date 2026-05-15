@@ -23,7 +23,7 @@ type ConsoleRecord = {
 function App() {
   const [consoles, setConsoles] = useState<ConsoleRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
-  const [command, setCommand] = useState("powershell.exe");
+  const [command, setCommand] = useState("cmd.exe");
   const [cwd, setCwd] = useState("");
   const dialog = useDialogStore();
   const selected = consoles.find((item) => item.id === selectedId);

@@ -7,7 +7,7 @@ const defaults: AppSettings = {
   host: process.env.YCONHOST_HOST ?? "127.0.0.1",
   port: Number(process.env.YCONHOST_PORT ?? 4000),
   dataDir: process.env.YCONHOST_DATA_DIR ?? path.resolve("data"),
-  defaultShell: process.platform === "win32" ? "powershell.exe" : process.env.SHELL ?? "bash",
+  defaultShell: process.platform === "win32" ? "cmd.exe" : process.env.SHELL ?? "bash",
   log: {
     maxBytes: 5 * 1024 * 1024,
     rotateFiles: 5,
