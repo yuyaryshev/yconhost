@@ -1,3 +1,4 @@
 conhost.exe
+createprocess_probe.exe
 conhost_stub.log
 conhost_stub.ready

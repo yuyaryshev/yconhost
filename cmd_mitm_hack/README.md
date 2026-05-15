@@ -13,6 +13,7 @@ Expected useful result:
 
 - `powershell -ExecutionPolicy Bypass -File .\build.ps1`
 - `powershell -ExecutionPolicy Bypass -File .\run_experiment.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\run_safe_variants.ps1`
 
 ## Findings So Far
 
@@ -37,10 +38,27 @@ Current implication:
 
 The simple search-order replacement hypothesis is false for normal `cmd.exe` console creation. The console host path appears to be resolved by the Windows console subsystem as the system `conhost.exe`, not by `cmd.exe` via current-directory or `PATH` lookup.
 
-The remaining interception routes are more invasive:
+Additional safe variants were tested:
+
+- Native `CreateProcess` from `cmd_mitm_hack` cwd with default flags.
+- Native `CreateProcess` with `CREATE_NEW_CONSOLE`.
+- Native `CreateProcess` with `CREATE_NEW_CONSOLE` and `cmd_mitm_hack` prepended to `PATH`.
+- Temporary per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\conhost.exe`, removed immediately after process launch.
+
+Observed result for all variants that created a new console:
+
+- The local stub was not launched.
+- The new console host was still `C:\Windows\system32\conhost.exe`.
+- The command line remained `\??\C:\Windows\system32\conhost.exe 0x4`.
+
+The default `CreateProcess` case without `CREATE_NEW_CONSOLE` did not create a new host because the child inherited the launcher's existing console context.
+
+The remaining interception routes are more invasive and are intentionally excluded from safe tests:
 
 - Image File Execution Options `Debugger` for `conhost.exe` (global machine-level interception, high blast radius).
 - DLL/API hooking in `cmd.exe` or system console creation paths.
 - Replacing or patching system `conhost.exe` (not acceptable).
 
-For this repository, the next safe experiment would be a non-global native launcher/probe that calls `CreateProcess` with different console flags and inherited handles, to confirm whether any documented creation path allows choosing an alternate console host. The current evidence suggests it will not.
+Current safe-test conclusion:
+
+No documented non-global process creation path tested so far lets a caller choose an alternate console host executable for a normal visible Windows console session.
