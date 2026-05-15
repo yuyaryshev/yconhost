@@ -8,7 +8,6 @@ const defaults: AppSettings = {
   port: Number(process.env.YCONHOST_PORT ?? 4000),
   dataDir: process.env.YCONHOST_DATA_DIR ?? path.resolve("data"),
   defaultShell: process.platform === "win32" ? "cmd.exe" : process.env.SHELL ?? "bash",
-  terminalBackend: process.env.YCONHOST_TERMINAL_BACKEND === "visible-window" ? "visible-window" : "conpty",
   log: {
     maxBytes: 5 * 1024 * 1024,
     rotateFiles: 5,

@@ -3,8 +3,6 @@
   host: "127.0.0.1",
   dataDir: "./data",
   defaultShell: "cmd.exe",
-  // "conpty" streams to Web UI through node-pty; "visible-window" starts a normal Windows console window.
-  terminalBackend: "conpty",
   log: {
     maxBytes: 5242880,
     rotateFiles: 5,

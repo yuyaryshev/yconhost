@@ -6,22 +6,16 @@ import { Button, Dialog, DialogDismiss, DialogHeading, useDialogStore } from "@a
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 
-type ConsoleMode = "managed" | "manual";
 type ConsoleRecord = {
   id: string;
   name: string;
   project: string;
   cwd: string;
   command: string;
-  status: "starting" | "running" | "ready" | "exited" | "detached";
-  mode: ConsoleMode;
-  vanillaVisible: boolean;
+  status: "starting" | "running" | "ready" | "exited";
   errorCount: number;
   unseenErrorCount: number;
-  attached: boolean;
   pid?: number;
-  hostPid?: number;
-  vanillaWindowHandle?: number;
 };
 
 function App() {
@@ -78,7 +72,7 @@ function App() {
               {group.consoles.length === 0 ? <div className="empty-project">No consoles</div> : null}
               {group.consoles.map((item) => (
                 <button key={item.id} className={`console-row ${item.id === selectedId ? "active" : ""}`} onClick={() => setSelectedId(item.id)}>
-                  <span className="status">{item.status === "running" ? "◷" : item.status === "ready" ? ">" : item.status === "detached" ? "!" : "×"}</span>
+                  <span className="status">{item.status === "running" ? "◷" : item.status === "ready" ? ">" : "×"}</span>
                   <span className="console-title">{item.name}</span>
                   {item.unseenErrorCount > 0 ? <span className="badge">{item.unseenErrorCount}</span> : null}
                 </button>
@@ -118,7 +112,7 @@ function TerminalPane({ consoleRecord, onChanged }: { consoleRecord: ConsoleReco
 
   useEffect(() => {
     const terminal = new Terminal({
-      cursorBlink: consoleRecord.mode === "managed",
+      cursorBlink: true,
       convertEol: true,
       scrollback: 5000,
       theme: { background: "#111316", foreground: "#e8ecef" }
@@ -146,7 +140,7 @@ function TerminalPane({ consoleRecord, onChanged }: { consoleRecord: ConsoleReco
       }
     });
     terminal.onData((data) => {
-      if (consoleRecord.mode === "managed" && socket.readyState === WebSocket.OPEN) {
+      if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "input", consoleId: consoleRecord.id, data }));
       }
     });
@@ -158,7 +152,7 @@ function TerminalPane({ consoleRecord, onChanged }: { consoleRecord: ConsoleReco
       socket.close();
       terminal.dispose();
     };
-  }, [consoleRecord.id, consoleRecord.mode]);
+  }, [consoleRecord.id]);
 
   async function post(path: string, body: unknown = {}) {
     await fetch(`/api/consoles/${consoleRecord.id}/${path}`, {
@@ -177,20 +171,13 @@ function TerminalPane({ consoleRecord, onChanged }: { consoleRecord: ConsoleReco
           <p>
             <span>{consoleRecord.cwd}</span>
             {consoleRecord.pid ? <span className="meta-pill">PID {consoleRecord.pid}</span> : null}
-            {consoleRecord.hostPid ? <span className="meta-pill">conhost {consoleRecord.hostPid}</span> : null}
           </p>
         </div>
         <div className="toolbar-actions">
-          <button onClick={() => post("vanilla", { visible: !consoleRecord.vanillaVisible })}>{consoleRecord.vanillaVisible ? "Hide vanilla" : "Show vanilla"}</button>
-          <button onClick={() => post("mode", { mode: consoleRecord.mode === "managed" ? "manual" : "managed" })}>
-            {consoleRecord.mode === "managed" ? "Managed" : "Manual"}
-          </button>
           <button onClick={() => post("signal", { signal: "ctrl+c" })}>Ctrl+C</button>
           <button onClick={() => post("restart")}>Restart</button>
         </div>
       </header>
-      {consoleRecord.mode === "manual" ? <div className="readonly-banner">Manual mode: web input is read-only</div> : null}
-      {!consoleRecord.attached ? <div className="readonly-banner">Detached: restart this console to attach a new live session</div> : null}
       <div ref={hostRef} className="terminal-host" />
     </div>
   );

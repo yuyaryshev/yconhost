@@ -1,5 +1,4 @@
-export type ConsoleMode = "managed" | "manual";
-export type ConsoleStatus = "starting" | "running" | "ready" | "exited" | "detached";
+export type ConsoleStatus = "starting" | "running" | "ready" | "exited";
 
 export interface ConsoleCreateRequest {
   name?: string;
@@ -22,17 +21,12 @@ export interface ConsoleRecord {
   args: string[];
   pid?: number;
   status: ConsoleStatus;
-  mode: ConsoleMode;
-  vanillaVisible: boolean;
   ansiParserEnabled: boolean;
   errorCount: number;
   unseenErrorCount: number;
   createdAt: string;
   updatedAt: string;
   exitCode?: number;
-  attached: boolean;
-  hostPid?: number;
-  vanillaWindowHandle?: number;
 }
 
 export interface ConsoleSnapshot extends ConsoleRecord {
@@ -44,7 +38,6 @@ export interface ProjectSummary {
   consoleCount: number;
   runningCount: number;
   readyCount: number;
-  detachedCount: number;
   unseenErrorCount: number;
 }
 
@@ -58,7 +51,6 @@ export interface AppSettings {
   port: number;
   dataDir: string;
   defaultShell: string;
-  terminalBackend: "conpty" | "visible-window";
   log: {
     maxBytes: number;
     rotateFiles: number;

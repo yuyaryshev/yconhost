@@ -70,9 +70,6 @@ export function createApp(manager: ConsoleManager): express.Express {
     )
   );
 
-  app.post("/api/consoles/:id/mode", route(respond((req) => manager.setMode(param(req, "id"), req.body.mode))));
-  app.post("/api/consoles/:id/vanilla", route(respond((req) => manager.setVanillaVisible(param(req, "id"), Boolean(req.body.visible)))));
-
   app.post(
     "/mcp",
     route(

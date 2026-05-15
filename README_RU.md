@@ -1,6 +1,6 @@
 # yconhost
 
-yconhost - локальный Web UI/API для управления консолями на хосте. Приложение сохраняет реальную консоль хоста как источник истины и предоставляет браузерный терминал, HTTP API, WebSocket streaming и небольшой HTTP MCP интерфейс для автоматизации.
+yconhost - локальный Web UI/API для управления консольными процессами через ConPTY/pipe backend. Приложение предоставляет браузерный терминал, HTTP API, WebSocket streaming и небольшой HTTP MCP интерфейс для автоматизации.
 
 ## Основные возможности
 
@@ -9,9 +9,7 @@ yconhost - локальный Web UI/API для управления консо�
 - Live streaming вывода терминала через WebSocket.
 - Отображение интерактивных терминалов в браузере через xterm.js.
 - Отправка обычного текста и специальных команд, включая `Ctrl+C` и `Ctrl+Break`.
-- Переключение между `managed` и `manual` режимами; в manual mode Web UI становится read-only для ввода.
 - Сохранение истории вывода в `data/logs`.
-- Восстановление metadata и сохраненного вывода после рестарта yconhost в виде detached-консолей.
 - Ротация логов и ограниченный in-memory scrollback.
 - Поиск ошибок по plain text и ANSI colored output.
 - Возможность отключить ANSI parser для отдельной консоли.
@@ -28,8 +26,6 @@ yconhost - локальный Web UI/API для управления консо�
 
 Production-конфиг pm2 находится в `ecosystem.config.cjs` и сейчас слушает `127.0.0.1:4010`, потому что порт `4000` на этом хосте уже занят.
 
-В `ecosystem.config.cjs` сейчас включен `YCONHOST_TERMINAL_BACKEND=visible-window`. Это временный Windows backend, который сразу запускает обычное видимое окно консоли вместо headless ConPTY session. Пока этот режим включен, streaming/input терминала через Web UI для новых консолей намеренно ограничены.
-
 ## API
 
 - `GET /api/health`
@@ -42,13 +38,11 @@ Production-конфиг pm2 находится в `ecosystem.config.cjs` и се
 - `POST /api/consoles/:id/input`
 - `POST /api/consoles/:id/signal`
 - `POST /api/consoles/:id/restart`
-- `POST /api/consoles/:id/mode`
-- `POST /api/consoles/:id/vanilla`
 - `DELETE /api/consoles/:id`
 - `POST /mcp`
 
 ## Текущие ограничения
 
-- Отобразить/скрыть vanilla console на Windows реализовано через поиск `PseudoConsoleWindow` связанного `conhost.exe` и вызов `ShowWindow`.
-- После рестарта yconhost уже восстанавливаются metadata и сохраненный вывод в виде detached-консолей; live re-attach к уже работающему процессу и его консоли еще реализуется.
+- yconhost использует только ConPTY/pipe backend. Отдельные native Windows console окна больше не создаются и не управляются.
+- Re-attach к уже работающим процессам после рестарта yconhost не поддерживается в упрощенной pipe-only модели.
 - UI-тестирование через Chrome MCP может не пройти, если общий профиль Chrome DevTools MCP уже заблокирован другим процессом.

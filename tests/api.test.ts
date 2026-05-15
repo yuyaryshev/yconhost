@@ -6,9 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/server/api.js";
 import { ConsoleManager } from "../src/server/consoleManager.js";
 import { LogStore } from "../src/server/logStore.js";
-import { RegistryStore } from "../src/server/registryStore.js";
 import { FakeTerminalFactory } from "../src/server/terminal.js";
-import type { VanillaConsoleController } from "../src/server/vanillaConsole.js";
 import type { AppSettings } from "../src/server/types.js";
 
 function testSettings(dataDir: string): AppSettings {
@@ -17,7 +15,6 @@ function testSettings(dataDir: string): AppSettings {
     port: 0,
     dataDir,
     defaultShell: "powershell.exe",
-    terminalBackend: "conpty",
     log: {
       maxBytes: 1024 * 1024,
       rotateFiles: 2,
@@ -32,14 +29,11 @@ describe("HTTP API", () => {
   let factory: FakeTerminalFactory;
   let manager: ConsoleManager;
   let app: ReturnType<typeof createApp>;
-  const fakeVanilla: VanillaConsoleController = {
-    setVisible: (_pid, visible) => ({ hostPid: 123, windowHandle: 456, visible })
-  };
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "yconhost-"));
     factory = new FakeTerminalFactory();
-    manager = new ConsoleManager(testSettings(dir), new LogStore(testSettings(dir)), factory, undefined, fakeVanilla);
+    manager = new ConsoleManager(testSettings(dir), new LogStore(testSettings(dir)), factory);
     app = createApp(manager);
   });
 
@@ -78,15 +72,6 @@ describe("HTTP API", () => {
 
     await request(app).delete(`/api/consoles/${created.body.id}`).expect(200);
     await request(app).get(`/api/consoles/${created.body.id}`).expect(404);
-  });
-
-  it("blocks web input in manual mode", async () => {
-    const created = await request(app).post("/api/consoles").send({ command: "pwsh", cwd: dir }).expect(200);
-    const visible = await request(app).post(`/api/consoles/${created.body.id}/vanilla`).send({ visible: true }).expect(200);
-    expect(visible.body).toMatchObject({ vanillaVisible: true, mode: "manual" });
-    await request(app).post(`/api/consoles/${created.body.id}/mode`).send({ mode: "manual" }).expect(200);
-    await request(app).post(`/api/consoles/${created.body.id}/input`).send({ data: "blocked" }).expect(400);
-    await request(app).post(`/api/consoles/${created.body.id}/mode`).send({ mode: "invalid" }).expect(400);
   });
 
   it("creates consoles from my_wins.json and skips no_run entries", async () => {
@@ -137,27 +122,4 @@ describe("HTTP API", () => {
     expect(factory.sessions.at(-1)?.writes.at(-1)).toBe("echo ok\r");
   });
 
-  it("restores console registry and logs as detached after manager restart", async () => {
-    const settings = testSettings(dir);
-    const registry = new RegistryStore(settings);
-    const firstManager = new ConsoleManager(settings, new LogStore(settings), factory, registry);
-    const created = firstManager.create({ name: "persisted", command: "echo ok", cwd: dir });
-    factory.sessions[0].push("persisted output\r\n");
-
-    const secondFactory = new FakeTerminalFactory();
-    const secondManager = new ConsoleManager(settings, new LogStore(settings), secondFactory, registry);
-    const secondApp = createApp(secondManager);
-
-    const list = await request(secondApp).get("/api/consoles").expect(200);
-    expect(list.body.consoles).toHaveLength(1);
-    expect(list.body.consoles[0]).toMatchObject({ id: created.id, name: "persisted", status: "detached", attached: false });
-
-    const output = await request(secondApp).get(`/api/consoles/${created.id}/output`).expect(200);
-    expect(output.body.output).toContain("persisted output");
-
-    await request(secondApp).post(`/api/consoles/${created.id}/input`).send({ data: "blocked" }).expect(400);
-    const restarted = await request(secondApp).post(`/api/consoles/${created.id}/restart`).expect(200);
-    expect(restarted.body.attached).toBe(true);
-    expect(secondFactory.sessions).toHaveLength(1);
-  });
 });

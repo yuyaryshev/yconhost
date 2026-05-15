@@ -4,16 +4,14 @@ import path from "node:path";
 import JSON5 from "json5";
 import { analyzeOutput } from "./outputAnalyzer.js";
 import type { LogStore } from "./logStore.js";
-import type { RegistryStore } from "./registryStore.js";
 import type { TerminalFactory, TerminalSession } from "./terminal.js";
-import { NoopVanillaConsoleController, type VanillaConsoleController } from "./vanillaConsole.js";
-import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleMode, ConsoleRecord, ConsoleSnapshot, ProjectSummary } from "./types.js";
+import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleRecord, ConsoleSnapshot, ProjectSummary } from "./types.js";
 
 type OutputListener = (consoleId: string, chunk: string) => void;
 
 interface ManagedConsole {
   record: ConsoleRecord;
-  session?: TerminalSession;
+  session: TerminalSession;
   tail: string;
 }
 
@@ -24,14 +22,8 @@ export class ConsoleManager {
   constructor(
     private readonly settings: AppSettings,
     private readonly logs: LogStore,
-    private readonly terminalFactory: TerminalFactory,
-    private readonly registry?: RegistryStore,
-    private readonly vanillaConsole: VanillaConsoleController = new NoopVanillaConsoleController()
-  ) {
-    for (const record of registry?.load() ?? []) {
-      this.consoles.set(record.id, { record, tail: this.logs.read(record.id).slice(-this.settings.log.scrollbackBytes) });
-    }
-  }
+    private readonly terminalFactory: TerminalFactory
+  ) {}
 
   onOutput(listener: OutputListener): () => void {
     this.listeners.add(listener);
@@ -53,7 +45,6 @@ export class ConsoleManager {
         consoleCount: consoles.length,
         runningCount: consoles.filter((row) => row.status === "running").length,
         readyCount: consoles.filter((row) => row.status === "ready").length,
-        detachedCount: consoles.filter((row) => row.status === "detached").length,
         unseenErrorCount: consoles.reduce((sum, row) => sum + row.unseenErrorCount, 0)
       };
     });
@@ -62,7 +53,6 @@ export class ConsoleManager {
   get(id: string): ConsoleSnapshot {
     const item = this.requireConsole(id);
     item.record.unseenErrorCount = 0;
-    this.persist();
     return { ...item.record, outputTail: item.tail };
   }
 
@@ -84,33 +74,24 @@ export class ConsoleManager {
       shell,
       args,
       status: "starting",
-      mode: "managed",
-      vanillaVisible: false,
       ansiParserEnabled: request.ansiParserEnabled ?? true,
       errorCount: 0,
       unseenErrorCount: 0,
       createdAt: now,
-      updatedAt: now,
-      attached: true
+      updatedAt: now
     };
 
     const session = this.terminalFactory.spawn(shell, args, { cwd, env: process.env });
     record.pid = session.pid;
     record.status = "running";
-    record.attached = true;
-    record.vanillaVisible = session.vanillaVisible ?? false;
-    record.mode = session.vanillaVisible ? "manual" : "managed";
     const managed: ManagedConsole = { record, session, tail: this.logs.read(id).slice(-this.settings.log.scrollbackBytes) };
     this.consoles.set(id, managed);
-    this.persist();
 
     session.onData((chunk) => this.capture(id, chunk));
     session.onExit((exitCode) => {
       record.exitCode = exitCode;
       record.status = "exited";
-      record.attached = false;
       record.updatedAt = new Date().toISOString();
-      this.persist();
       this.emit(id, `\r\n[yconhost] process exited with code ${exitCode ?? "unknown"}\r\n`);
     });
 
@@ -148,22 +129,12 @@ export class ConsoleManager {
 
   write(id: string, data: string): void {
     const item = this.requireConsole(id);
-    if (item.record.mode === "manual") {
-      throw new Error("Console is in manual mode; web input is read-only");
-    }
-    if (!item.session || !item.record.attached) {
-      throw new Error("Console is detached; restart it before sending input");
-    }
     item.session.write(data);
     item.record.updatedAt = new Date().toISOString();
-    this.persist();
   }
 
   signal(id: string, signal: string): void {
     const item = this.requireConsole(id);
-    if (!item.session || !item.record.attached) {
-      throw new Error("Console is detached; restart it before sending signals");
-    }
     if (signal === "ctrl+c") {
       item.session.write("\x03");
     } else if (signal === "ctrl+break") {
@@ -172,30 +143,6 @@ export class ConsoleManager {
       item.session.kill(signal);
     }
     item.record.updatedAt = new Date().toISOString();
-    this.persist();
-  }
-
-  setMode(id: string, mode: ConsoleMode): ConsoleRecord {
-    if (mode !== "managed" && mode !== "manual") {
-      throw new Error("mode must be managed or manual");
-    }
-    const item = this.requireConsole(id);
-    item.record.mode = mode;
-    item.record.updatedAt = new Date().toISOString();
-    this.persist();
-    return item.record;
-  }
-
-  setVanillaVisible(id: string, visible: boolean): ConsoleRecord {
-    const item = this.requireConsole(id);
-    const result = this.vanillaConsole.setVisible(item.record.pid, visible);
-    item.record.hostPid = result.hostPid;
-    item.record.vanillaWindowHandle = result.windowHandle;
-    item.record.vanillaVisible = result.visible;
-    item.record.mode = result.visible ? "manual" : "managed";
-    item.record.updatedAt = new Date().toISOString();
-    this.persist();
-    return item.record;
   }
 
   restart(id: string): ConsoleRecord {
@@ -209,17 +156,15 @@ export class ConsoleManager {
       args: old.record.args,
       ansiParserEnabled: old.record.ansiParserEnabled
     };
-    old.session?.kill();
+    old.session.kill();
     this.consoles.delete(id);
-    this.persist();
     return this.create(request);
   }
 
   kill(id: string): void {
     const item = this.requireConsole(id);
-    item.session?.kill();
+    item.session.kill();
     this.consoles.delete(id);
-    this.persist();
   }
 
   private capture(id: string, chunk: string): void {
@@ -233,7 +178,6 @@ export class ConsoleManager {
     item.record.unseenErrorCount += Math.max(0, delta);
     item.record.status = result.status;
     item.record.updatedAt = new Date().toISOString();
-    this.persist();
     this.emit(id, chunk);
   }
 
@@ -249,10 +193,6 @@ export class ConsoleManager {
       throw new Error(`Console ${id} not found`);
     }
     return item;
-  }
-
-  private persist(): void {
-    this.registry?.save(this.list());
   }
 }
 
