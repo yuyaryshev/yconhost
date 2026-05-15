@@ -47,6 +47,6 @@ The production pm2 config is in `ecosystem.config.cjs` and currently binds to `1
 
 ## Current Limitations
 
-- Vanilla console show/hide is currently represented in yconhost state and mode switching. Direct OS-level show/hide of an existing console window still needs a Windows-specific adapter.
+- Vanilla console show/hide is implemented on Windows by finding the process' `conhost.exe` `PseudoConsoleWindow` and calling `ShowWindow`.
 - Re-attach after yconhost restart currently restores metadata and persisted output as detached consoles; live process re-attachment to an already running console is still under implementation.
 - Chrome MCP UI testing may fail when the shared Chrome DevTools MCP profile is already locked by another process.

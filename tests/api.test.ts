@@ -8,6 +8,7 @@ import { ConsoleManager } from "../src/server/consoleManager.js";
 import { LogStore } from "../src/server/logStore.js";
 import { RegistryStore } from "../src/server/registryStore.js";
 import { FakeTerminalFactory } from "../src/server/terminal.js";
+import type { VanillaConsoleController } from "../src/server/vanillaConsole.js";
 import type { AppSettings } from "../src/server/types.js";
 
 function testSettings(dataDir: string): AppSettings {
@@ -30,11 +31,14 @@ describe("HTTP API", () => {
   let factory: FakeTerminalFactory;
   let manager: ConsoleManager;
   let app: ReturnType<typeof createApp>;
+  const fakeVanilla: VanillaConsoleController = {
+    setVisible: (_pid, visible) => ({ hostPid: 123, windowHandle: 456, visible })
+  };
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "yconhost-"));
     factory = new FakeTerminalFactory();
-    manager = new ConsoleManager(testSettings(dir), new LogStore(testSettings(dir)), factory);
+    manager = new ConsoleManager(testSettings(dir), new LogStore(testSettings(dir)), factory, undefined, fakeVanilla);
     app = createApp(manager);
   });
 

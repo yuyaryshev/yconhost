@@ -6,6 +6,7 @@ import { analyzeOutput } from "./outputAnalyzer.js";
 import type { LogStore } from "./logStore.js";
 import type { RegistryStore } from "./registryStore.js";
 import type { TerminalFactory, TerminalSession } from "./terminal.js";
+import { NoopVanillaConsoleController, type VanillaConsoleController } from "./vanillaConsole.js";
 import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleMode, ConsoleRecord, ConsoleSnapshot, ProjectSummary } from "./types.js";
 
 type OutputListener = (consoleId: string, chunk: string) => void;
@@ -24,7 +25,8 @@ export class ConsoleManager {
     private readonly settings: AppSettings,
     private readonly logs: LogStore,
     private readonly terminalFactory: TerminalFactory,
-    private readonly registry?: RegistryStore
+    private readonly registry?: RegistryStore,
+    private readonly vanillaConsole: VanillaConsoleController = new NoopVanillaConsoleController()
   ) {
     for (const record of registry?.load() ?? []) {
       this.consoles.set(record.id, { record, tail: this.logs.read(record.id).slice(-this.settings.log.scrollbackBytes) });
@@ -184,8 +186,11 @@ export class ConsoleManager {
 
   setVanillaVisible(id: string, visible: boolean): ConsoleRecord {
     const item = this.requireConsole(id);
-    item.record.vanillaVisible = visible;
-    item.record.mode = visible ? "manual" : "managed";
+    const result = this.vanillaConsole.setVisible(item.record.pid, visible);
+    item.record.hostPid = result.hostPid;
+    item.record.vanillaWindowHandle = result.windowHandle;
+    item.record.vanillaVisible = result.visible;
+    item.record.mode = result.visible ? "manual" : "managed";
     item.record.updatedAt = new Date().toISOString();
     this.persist();
     return item.record;

@@ -31,6 +31,8 @@ export interface ConsoleRecord {
   updatedAt: string;
   exitCode?: number;
   attached: boolean;
+  hostPid?: number;
+  vanillaWindowHandle?: number;
 }
 
 export interface ConsoleSnapshot extends ConsoleRecord {

@@ -5,9 +5,16 @@ import { LogStore } from "./logStore.js";
 import { RegistryStore } from "./registryStore.js";
 import { loadSettings } from "./settings.js";
 import { NodePtyTerminalFactory } from "./terminal.js";
+import { createVanillaConsoleController } from "./vanillaConsole.js";
 
 const settings = loadSettings();
-const manager = new ConsoleManager(settings, new LogStore(settings), new NodePtyTerminalFactory(), new RegistryStore(settings));
+const manager = new ConsoleManager(
+  settings,
+  new LogStore(settings),
+  new NodePtyTerminalFactory(),
+  new RegistryStore(settings),
+  createVanillaConsoleController()
+);
 const app = createApp(manager);
 const server = http.createServer(app);
 attachWebSocket(server, manager);

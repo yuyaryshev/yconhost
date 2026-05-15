@@ -47,6 +47,6 @@ Production-конфиг pm2 находится в `ecosystem.config.cjs` и се
 
 ## Текущие ограничения
 
-- Отобразить/скрыть vanilla console сейчас реализовано как состояние yconhost и переключение режима. Прямое OS-level управление существующим окном консоли требует отдельного Windows adapter.
+- Отобразить/скрыть vanilla console на Windows реализовано через поиск `PseudoConsoleWindow` связанного `conhost.exe` и вызов `ShowWindow`.
 - После рестарта yconhost уже восстанавливаются metadata и сохраненный вывод в виде detached-консолей; live re-attach к уже работающему процессу и его консоли еще реализуется.
 - UI-тестирование через Chrome MCP может не пройти, если общий профиль Chrome DevTools MCP уже заблокирован другим процессом.
