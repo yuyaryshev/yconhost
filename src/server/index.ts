@@ -1,0 +1,16 @@
+import http from "node:http";
+import { createApp, attachWebSocket } from "./api.js";
+import { ConsoleManager } from "./consoleManager.js";
+import { LogStore } from "./logStore.js";
+import { loadSettings } from "./settings.js";
+import { NodePtyTerminalFactory } from "./terminal.js";
+
+const settings = loadSettings();
+const manager = new ConsoleManager(settings, new LogStore(settings), new NodePtyTerminalFactory());
+const app = createApp(manager);
+const server = http.createServer(app);
+attachWebSocket(server, manager);
+
+server.listen(settings.port, settings.host, () => {
+  console.log(`yconhost listening on http://${settings.host}:${settings.port}`);
+});

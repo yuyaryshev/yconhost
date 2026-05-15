@@ -1,0 +1,62 @@
+export type ConsoleMode = "managed" | "manual";
+export type ConsoleStatus = "starting" | "running" | "ready" | "exited";
+
+export interface ConsoleCreateRequest {
+  name?: string;
+  project?: string;
+  cwd?: string;
+  command?: string;
+  shell?: string;
+  args?: string[];
+  ansiParserEnabled?: boolean;
+}
+
+export interface ConsoleRecord {
+  id: string;
+  name: string;
+  project: string;
+  cwd: string;
+  command: string;
+  shell: string;
+  args: string[];
+  pid?: number;
+  status: ConsoleStatus;
+  mode: ConsoleMode;
+  vanillaVisible: boolean;
+  ansiParserEnabled: boolean;
+  errorCount: number;
+  unseenErrorCount: number;
+  createdAt: string;
+  updatedAt: string;
+  exitCode?: number;
+}
+
+export interface ConsoleSnapshot extends ConsoleRecord {
+  outputTail: string;
+}
+
+export interface TrackerResult {
+  status: ConsoleStatus;
+  errorCount: number;
+}
+
+export interface AppSettings {
+  host: string;
+  port: number;
+  dataDir: string;
+  defaultShell: string;
+  log: {
+    maxBytes: number;
+    rotateFiles: number;
+    scrollbackBytes: number;
+    trackerTailChars: number;
+  };
+}
+
+export interface BatchWinConfig {
+  cmd?: string;
+  command?: string;
+  cwd?: string;
+  no_run?: boolean;
+  ansiParserEnabled?: boolean;
+}
