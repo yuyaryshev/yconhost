@@ -91,11 +91,11 @@ function App() {
         <DialogHeading className="dialog-title">Create console</DialogHeading>
         <label>
           Command
-          <input value={command} onChange={(event) => setCommand(event.target.value)} />
+          <input id="console-command" name="command" value={command} onChange={(event) => setCommand(event.target.value)} />
         </label>
         <label>
           Working directory
-          <input value={cwd} onChange={(event) => setCwd(event.target.value)} placeholder="Current yconhost directory" />
+          <input id="console-cwd" name="cwd" value={cwd} onChange={(event) => setCwd(event.target.value)} placeholder="Current yconhost directory" />
         </label>
         <div className="dialog-actions">
           <DialogDismiss className="secondary-button">Cancel</DialogDismiss>
