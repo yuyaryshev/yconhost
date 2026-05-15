@@ -11,6 +11,7 @@ yconhost - локальный Web UI/API для управления консо�
 - Отправка обычного текста и специальных команд, включая `Ctrl+C` и `Ctrl+Break`.
 - Переключение между `managed` и `manual` режимами; в manual mode Web UI становится read-only для ввода.
 - Сохранение истории вывода в `data/logs`.
+- Восстановление metadata и сохраненного вывода после рестарта yconhost в виде detached-консолей.
 - Ротация логов и ограниченный in-memory scrollback.
 - Поиск ошибок по plain text и ANSI colored output.
 - Возможность отключить ANSI parser для отдельной консоли.
@@ -30,6 +31,7 @@ Production-конфиг pm2 находится в `ecosystem.config.cjs` и се
 ## API
 
 - `GET /api/health`
+- `GET /api/projects`
 - `GET /api/consoles`
 - `POST /api/consoles`
 - `POST /api/batch`
@@ -46,5 +48,5 @@ Production-конфиг pm2 находится в `ecosystem.config.cjs` и се
 ## Текущие ограничения
 
 - Отобразить/скрыть vanilla console сейчас реализовано как состояние yconhost и переключение режима. Прямое OS-level управление существующим окном консоли требует отдельного Windows adapter.
-- После рестарта yconhost уже восстанавливаются metadata и сохраненный вывод; live re-attach к уже работающему процессу и его консоли еще реализуется.
+- После рестарта yconhost уже восстанавливаются metadata и сохраненный вывод в виде detached-консолей; live re-attach к уже работающему процессу и его консоли еще реализуется.
 - UI-тестирование через Chrome MCP может не пройти, если общий профиль Chrome DevTools MCP уже заблокирован другим процессом.

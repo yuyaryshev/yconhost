@@ -13,11 +13,12 @@ type ConsoleRecord = {
   project: string;
   cwd: string;
   command: string;
-  status: "starting" | "running" | "ready" | "exited";
+  status: "starting" | "running" | "ready" | "exited" | "detached";
   mode: ConsoleMode;
   vanillaVisible: boolean;
   errorCount: number;
   unseenErrorCount: number;
+  attached: boolean;
 };
 
 function App() {
@@ -74,7 +75,7 @@ function App() {
               {group.consoles.length === 0 ? <div className="empty-project">No consoles</div> : null}
               {group.consoles.map((item) => (
                 <button key={item.id} className={`console-row ${item.id === selectedId ? "active" : ""}`} onClick={() => setSelectedId(item.id)}>
-                  <span className="status">{item.status === "running" ? "◷" : item.status === "ready" ? ">" : "×"}</span>
+                  <span className="status">{item.status === "running" ? "◷" : item.status === "ready" ? ">" : item.status === "detached" ? "!" : "×"}</span>
                   <span className="console-title">{item.name}</span>
                   {item.unseenErrorCount > 0 ? <span className="badge">{item.unseenErrorCount}</span> : null}
                 </button>
@@ -179,6 +180,7 @@ function TerminalPane({ consoleRecord, onChanged }: { consoleRecord: ConsoleReco
         </div>
       </header>
       {consoleRecord.mode === "manual" ? <div className="readonly-banner">Manual mode: web input is read-only</div> : null}
+      {!consoleRecord.attached ? <div className="readonly-banner">Detached: restart this console to attach a new live session</div> : null}
       <div ref={hostRef} className="terminal-host" />
     </div>
   );

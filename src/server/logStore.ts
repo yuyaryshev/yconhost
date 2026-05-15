@@ -23,7 +23,11 @@ export class LogStore {
 
   readTail(consoleId: string, lineCount: number): string {
     const all = this.read(consoleId);
-    return all.split(/\r?\n/).slice(-lineCount).join("\n");
+    const lines = all.split(/\r?\n/);
+    if (lines.at(-1) === "") {
+      lines.pop();
+    }
+    return lines.slice(-lineCount).join("\n");
   }
 
   private file(consoleId: string): string {

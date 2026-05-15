@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/server/api.js";
 import { ConsoleManager } from "../src/server/consoleManager.js";
 import { LogStore } from "../src/server/logStore.js";
+import { RegistryStore } from "../src/server/registryStore.js";
 import { FakeTerminalFactory } from "../src/server/terminal.js";
 import type { AppSettings } from "../src/server/types.js";
 
@@ -37,6 +38,11 @@ describe("HTTP API", () => {
     app = createApp(manager);
   });
 
+  it("reports health", async () => {
+    const response = await request(app).get("/api/health").expect(200);
+    expect(response.body.ok).toBe(true);
+  });
+
   it("creates, lists, reads, writes and deletes a console", async () => {
     const created = await request(app).post("/api/consoles").send({ name: "dev", command: "echo ok", project: "Default", cwd: dir }).expect(200);
     expect(created.body.name).toBe("dev");
@@ -48,11 +54,21 @@ describe("HTTP API", () => {
     expect(list.body.consoles).toHaveLength(1);
     expect(list.body.consoles[0].unseenErrorCount).toBeGreaterThan(0);
 
-    await request(app).post(`/api/consoles/${created.body.id}/input`).send({ data: "dir\r" }).expect(200);
-    expect(factory.sessions[0].writes.at(-1)).toBe("dir\r");
+    const snapshot = await request(app).get(`/api/consoles/${created.body.id}`).expect(200);
+    expect(snapshot.body.outputTail).toContain("hello");
+    expect(snapshot.body.unseenErrorCount).toBe(0);
+
+    const afterView = await request(app).get("/api/consoles").expect(200);
+    expect(afterView.body.consoles[0].unseenErrorCount).toBe(0);
 
     const output = await request(app).get(`/api/consoles/${created.body.id}/output`).expect(200);
     expect(output.body.output).toContain("hello");
+
+    const tail = await request(app).get(`/api/consoles/${created.body.id}/output?tailLines=1`).expect(200);
+    expect(tail.body.output).toContain("error happened");
+
+    await request(app).post(`/api/consoles/${created.body.id}/input`).send({ data: "dir\r" }).expect(200);
+    expect(factory.sessions[0].writes.at(-1)).toBe("dir\r");
 
     await request(app).delete(`/api/consoles/${created.body.id}`).expect(200);
     await request(app).get(`/api/consoles/${created.body.id}`).expect(404);
@@ -60,8 +76,11 @@ describe("HTTP API", () => {
 
   it("blocks web input in manual mode", async () => {
     const created = await request(app).post("/api/consoles").send({ command: "pwsh", cwd: dir }).expect(200);
+    const visible = await request(app).post(`/api/consoles/${created.body.id}/vanilla`).send({ visible: true }).expect(200);
+    expect(visible.body).toMatchObject({ vanillaVisible: true, mode: "manual" });
     await request(app).post(`/api/consoles/${created.body.id}/mode`).send({ mode: "manual" }).expect(200);
     await request(app).post(`/api/consoles/${created.body.id}/input`).send({ data: "blocked" }).expect(400);
+    await request(app).post(`/api/consoles/${created.body.id}/mode`).send({ mode: "invalid" }).expect(400);
   });
 
   it("creates consoles from my_wins.json and skips no_run entries", async () => {
@@ -74,6 +93,18 @@ describe("HTTP API", () => {
     const response = await request(app).post("/api/batch").send({ projectPath: dir }).expect(200);
     expect(response.body).toHaveLength(1);
     expect(response.body[0].name).toBe("watch");
+
+    const projects = await request(app).get("/api/projects").expect(200);
+    expect(projects.body.projects).toContainEqual(
+      expect.objectContaining({
+        name: path.basename(dir),
+        consoleCount: 1
+      })
+    );
+  });
+
+  it("validates batch projectPath", async () => {
+    await request(app).post("/api/batch").send({}).expect(400);
   });
 
   it("supports signals, restart and MCP tools", async () => {
@@ -86,5 +117,41 @@ describe("HTTP API", () => {
 
     const tools = await request(app).post("/mcp").send({ method: "tools/list" }).expect(200);
     expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toContain("list_consoles");
+
+    const read = await request(app)
+      .post("/mcp")
+      .send({ method: "tools/call", params: { name: "read_console", arguments: { id: restarted.body.id } } })
+      .expect(200);
+    expect(read.body.content[0].type).toBe("text");
+
+    await request(app)
+      .post("/mcp")
+      .send({ method: "tools/call", params: { name: "write_console", arguments: { id: restarted.body.id, data: "echo ok\r" } } })
+      .expect(200);
+    expect(factory.sessions.at(-1)?.writes.at(-1)).toBe("echo ok\r");
+  });
+
+  it("restores console registry and logs as detached after manager restart", async () => {
+    const settings = testSettings(dir);
+    const registry = new RegistryStore(settings);
+    const firstManager = new ConsoleManager(settings, new LogStore(settings), factory, registry);
+    const created = firstManager.create({ name: "persisted", command: "echo ok", cwd: dir });
+    factory.sessions[0].push("persisted output\r\n");
+
+    const secondFactory = new FakeTerminalFactory();
+    const secondManager = new ConsoleManager(settings, new LogStore(settings), secondFactory, registry);
+    const secondApp = createApp(secondManager);
+
+    const list = await request(secondApp).get("/api/consoles").expect(200);
+    expect(list.body.consoles).toHaveLength(1);
+    expect(list.body.consoles[0]).toMatchObject({ id: created.id, name: "persisted", status: "detached", attached: false });
+
+    const output = await request(secondApp).get(`/api/consoles/${created.id}/output`).expect(200);
+    expect(output.body.output).toContain("persisted output");
+
+    await request(secondApp).post(`/api/consoles/${created.id}/input`).send({ data: "blocked" }).expect(400);
+    const restarted = await request(secondApp).post(`/api/consoles/${created.id}/restart`).expect(200);
+    expect(restarted.body.attached).toBe(true);
+    expect(secondFactory.sessions).toHaveLength(1);
   });
 });

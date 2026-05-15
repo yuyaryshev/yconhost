@@ -4,14 +4,15 @@ import path from "node:path";
 import JSON5 from "json5";
 import { analyzeOutput } from "./outputAnalyzer.js";
 import type { LogStore } from "./logStore.js";
+import type { RegistryStore } from "./registryStore.js";
 import type { TerminalFactory, TerminalSession } from "./terminal.js";
-import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleMode, ConsoleRecord, ConsoleSnapshot } from "./types.js";
+import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleMode, ConsoleRecord, ConsoleSnapshot, ProjectSummary } from "./types.js";
 
 type OutputListener = (consoleId: string, chunk: string) => void;
 
 interface ManagedConsole {
   record: ConsoleRecord;
-  session: TerminalSession;
+  session?: TerminalSession;
   tail: string;
 }
 
@@ -22,8 +23,13 @@ export class ConsoleManager {
   constructor(
     private readonly settings: AppSettings,
     private readonly logs: LogStore,
-    private readonly terminalFactory: TerminalFactory
-  ) {}
+    private readonly terminalFactory: TerminalFactory,
+    private readonly registry?: RegistryStore
+  ) {
+    for (const record of registry?.load() ?? []) {
+      this.consoles.set(record.id, { record, tail: this.logs.read(record.id).slice(-this.settings.log.scrollbackBytes) });
+    }
+  }
 
   onOutput(listener: OutputListener): () => void {
     this.listeners.add(listener);
@@ -35,13 +41,33 @@ export class ConsoleManager {
     return project ? rows.filter((row) => row.project === project) : rows;
   }
 
+  listProjects(): ProjectSummary[] {
+    const rows = this.list();
+    const names = new Set(["Default", ...rows.map((row) => row.project)]);
+    return [...names].map((name) => {
+      const consoles = rows.filter((row) => row.project === name);
+      return {
+        name,
+        consoleCount: consoles.length,
+        runningCount: consoles.filter((row) => row.status === "running").length,
+        readyCount: consoles.filter((row) => row.status === "ready").length,
+        detachedCount: consoles.filter((row) => row.status === "detached").length,
+        unseenErrorCount: consoles.reduce((sum, row) => sum + row.unseenErrorCount, 0)
+      };
+    });
+  }
+
   get(id: string): ConsoleSnapshot {
     const item = this.requireConsole(id);
     item.record.unseenErrorCount = 0;
+    this.persist();
     return { ...item.record, outputTail: item.tail };
   }
 
   create(request: ConsoleCreateRequest): ConsoleRecord {
+    if (request.projectPath) {
+      throw new Error("Use /api/batch to create consoles from a project path");
+    }
     const id = crypto.randomUUID();
     const cwd = path.resolve(request.cwd ?? process.cwd());
     const shell = request.shell ?? this.settings.defaultShell;
@@ -62,20 +88,25 @@ export class ConsoleManager {
       errorCount: 0,
       unseenErrorCount: 0,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      attached: true
     };
 
     const session = this.terminalFactory.spawn(shell, args, { cwd, env: process.env });
     record.pid = session.pid;
     record.status = "running";
+    record.attached = true;
     const managed: ManagedConsole = { record, session, tail: this.logs.read(id).slice(-this.settings.log.scrollbackBytes) };
     this.consoles.set(id, managed);
+    this.persist();
 
     session.onData((chunk) => this.capture(id, chunk));
     session.onExit((exitCode) => {
       record.exitCode = exitCode;
       record.status = "exited";
+      record.attached = false;
       record.updatedAt = new Date().toISOString();
+      this.persist();
       this.emit(id, `\r\n[yconhost] process exited with code ${exitCode ?? "unknown"}\r\n`);
     });
 
@@ -83,6 +114,9 @@ export class ConsoleManager {
   }
 
   createBatch(projectPath: string, fileName?: string): ConsoleRecord[] {
+    if (!projectPath || typeof projectPath !== "string") {
+      throw new Error("projectPath is required");
+    }
     const candidates = fileName ? [fileName] : ["mywins.json", "my_wins.json"];
     const configPath = candidates.map((candidate) => path.join(projectPath, candidate)).find((candidate) => fs.existsSync(candidate));
     if (!configPath) {
@@ -113,12 +147,19 @@ export class ConsoleManager {
     if (item.record.mode === "manual") {
       throw new Error("Console is in manual mode; web input is read-only");
     }
+    if (!item.session || !item.record.attached) {
+      throw new Error("Console is detached; restart it before sending input");
+    }
     item.session.write(data);
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
   }
 
   signal(id: string, signal: string): void {
     const item = this.requireConsole(id);
+    if (!item.session || !item.record.attached) {
+      throw new Error("Console is detached; restart it before sending signals");
+    }
     if (signal === "ctrl+c") {
       item.session.write("\x03");
     } else if (signal === "ctrl+break") {
@@ -127,12 +168,17 @@ export class ConsoleManager {
       item.session.kill(signal);
     }
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
   }
 
   setMode(id: string, mode: ConsoleMode): ConsoleRecord {
+    if (mode !== "managed" && mode !== "manual") {
+      throw new Error("mode must be managed or manual");
+    }
     const item = this.requireConsole(id);
     item.record.mode = mode;
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
     return item.record;
   }
 
@@ -141,6 +187,7 @@ export class ConsoleManager {
     item.record.vanillaVisible = visible;
     item.record.mode = visible ? "manual" : "managed";
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
     return item.record;
   }
 
@@ -155,15 +202,17 @@ export class ConsoleManager {
       args: old.record.args,
       ansiParserEnabled: old.record.ansiParserEnabled
     };
-    old.session.kill();
+    old.session?.kill();
     this.consoles.delete(id);
+    this.persist();
     return this.create(request);
   }
 
   kill(id: string): void {
     const item = this.requireConsole(id);
-    item.session.kill();
+    item.session?.kill();
     this.consoles.delete(id);
+    this.persist();
   }
 
   private capture(id: string, chunk: string): void {
@@ -177,6 +226,7 @@ export class ConsoleManager {
     item.record.unseenErrorCount += Math.max(0, delta);
     item.record.status = result.status;
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
     this.emit(id, chunk);
   }
 
@@ -192,6 +242,10 @@ export class ConsoleManager {
       throw new Error(`Console ${id} not found`);
     }
     return item;
+  }
+
+  private persist(): void {
+    this.registry?.save(this.list());
   }
 }
 

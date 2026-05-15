@@ -16,6 +16,10 @@ export function createApp(manager: ConsoleManager): express.Express {
     res.json({ consoles: manager.list(req.query.project?.toString()) });
   });
 
+  app.get("/api/projects", (_req, res) => {
+    res.json({ projects: manager.listProjects() });
+  });
+
   app.post("/api/consoles", route(respond((req) => manager.create(req.body))));
 
   app.post("/api/batch", route(respond((req) => manager.createBatch(req.body.projectPath, req.body.fileName))));
@@ -110,7 +114,11 @@ export function attachWebSocket(server: Server, manager: ConsoleManager): WebSoc
     socket.on("message", (raw) => {
       const message = JSON.parse(raw.toString()) as { type: string; consoleId: string; data?: string; cols?: number; rows?: number };
       if (message.type === "input" && message.data !== undefined) {
-        manager.write(message.consoleId, message.data);
+        try {
+          manager.write(message.consoleId, message.data);
+        } catch (error) {
+          socket.send(JSON.stringify({ type: "error", consoleId: message.consoleId, message: error instanceof Error ? error.message : "Unknown error" }));
+        }
       }
     });
     socket.on("close", unsubscribe);
