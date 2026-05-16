@@ -20,6 +20,19 @@ export function createApp(manager: ConsoleManager): express.Express {
     res.json({ projects: manager.listProjects() });
   });
 
+  app.get("/api/recent-projects", (_req, res) => {
+    res.json({ projects: manager.recentProjects() });
+  });
+
+  app.delete(
+    "/api/recent-projects",
+    route(
+      respond((req) => ({
+        projects: manager.removeRecentProject(String(req.body.projectPath ?? ""))
+      }))
+    )
+  );
+
   app.post("/api/consoles", route(respond((req) => manager.create(req.body))));
 
   app.post("/api/batch", route(respond((req) => manager.createBatch(req.body.projectPath, req.body.fileName))));
@@ -62,6 +75,8 @@ export function createApp(manager: ConsoleManager): express.Express {
 
   app.post("/api/consoles/:id/name", route(respond((req) => manager.rename(param(req, "id"), String(req.body.name ?? "")))));
 
+  app.post("/api/consoles/:id/read", route(respond((req) => manager.markRead(param(req, "id")))));
+
   app.delete(
     "/api/consoles/:id",
     route(
@@ -71,6 +86,21 @@ export function createApp(manager: ConsoleManager): express.Express {
       })
     )
   );
+
+  app.post("/api/projects/:project/restart", route(respond((req) => manager.restartProject(param(req, "project")))));
+  app.post("/api/projects/:project/stop", route(respond((req) => {
+    manager.stopProject(param(req, "project"));
+    return { ok: true };
+  })));
+  app.post("/api/projects/:project/start", route(respond((req) => manager.startProject(param(req, "project")))));
+  app.post("/api/projects/:project/read", route(respond((req) => {
+    manager.markProjectRead(param(req, "project"));
+    return { ok: true };
+  })));
+  app.delete("/api/projects/:project", route(respond((req) => {
+    manager.closeProject(param(req, "project"));
+    return { ok: true };
+  })));
 
   app.post(
     "/mcp",

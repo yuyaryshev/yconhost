@@ -10,6 +10,7 @@ type ConsoleRecord = {
   id: string;
   name: string;
   project: string;
+  projectPath?: string;
   cwd: string;
   command: string;
   status: "starting" | "running" | "ready" | "exited";
@@ -18,8 +19,27 @@ type ConsoleRecord = {
   pid?: number;
 };
 
+type ErrorMatch = {
+  id: string;
+  createdAt: string;
+  line: string;
+  reason: string;
+};
+
+type ConsoleSnapshot = ConsoleRecord & {
+  outputTail: string;
+  errorMatches: ErrorMatch[];
+};
+
+type RecentProject = {
+  path: string;
+  name: string;
+  openedAt: string;
+};
+
 function App() {
   const [consoles, setConsoles] = useState<ConsoleRecord[]>([]);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [shellChoice, setShellChoice] = useState("cmd.exe");
   const [customShell, setCustomShell] = useState("");
@@ -27,6 +47,7 @@ function App() {
   const [cwd, setCwd] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
   const advancedDialog = useDialogStore();
   const folderDialog = useDialogStore();
   const selected = consoles.find((item) => item.id === selectedId);
@@ -38,8 +59,15 @@ function App() {
     setSelectedId((current) => (current && data.consoles.some((item) => item.id === current) ? current : data.consoles[0]?.id));
   }
 
+  async function refreshRecentProjects() {
+    const response = await fetch("/api/recent-projects");
+    const data = (await response.json()) as { projects: RecentProject[] };
+    setRecentProjects(data.projects);
+  }
+
   useEffect(() => {
     refresh();
+    refreshRecentProjects();
     const timer = window.setInterval(refresh, 2000);
     return () => window.clearInterval(timer);
   }, []);
@@ -104,6 +132,7 @@ function App() {
     }
 
     folderDialog.hide();
+    await refreshRecentProjects();
     await refresh();
   }
 
@@ -126,10 +155,39 @@ function App() {
     }
   }
 
+  async function markConsoleRead(id: string) {
+    const response = await fetch(`/api/consoles/${id}/read`, { method: "POST" });
+    if (response.ok) await refresh();
+  }
+
+  async function closeProject(project: string) {
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}`, { method: "DELETE" });
+    if (response.ok) await refresh();
+  }
+
+  async function runProjectAction(project: string, action: "restart" | "stop" | "start" | "read") {
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/${action}`, { method: "POST" });
+    if (response.ok) await refresh();
+  }
+
+  async function removeRecentProject(projectPath: string) {
+    const response = await fetch("/api/recent-projects", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectPath })
+    });
+    if (response.ok) await refreshRecentProjects();
+  }
+
   const projects = useMemo(() => {
     const names = new Set(["Default", ...consoles.map((item) => item.project)]);
     return [...names].map((project) => ({ project, consoles: consoles.filter((item) => item.project === project) }));
   }, [consoles]);
+  const filteredRecentProjects = useMemo(() => {
+    const query = folderPath.trim().toLowerCase();
+    if (!query) return recentProjects;
+    return recentProjects.filter((project) => project.path.toLowerCase().includes(query) || project.name.toLowerCase().includes(query));
+  }, [folderPath, recentProjects]);
 
   return (
     <main className="app-shell">
@@ -151,6 +209,14 @@ function App() {
                 <div className="dropdown-menu">
                   <button
                     onClick={() => {
+                      setDebugMode((value) => !value);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {debugMode ? "Disable debug mode" : "Enable debug mode"}
+                  </button>
+                  <button
+                    onClick={() => {
                       setMenuOpen(false);
                       advancedDialog.show();
                     }}
@@ -165,7 +231,14 @@ function App() {
         <div className="project-list">
           {projects.map((group) => (
             <section key={group.project} className="project-group">
-              <h2>{group.project}</h2>
+              <ProjectHeader
+                project={group.project}
+                onClose={closeProject}
+                onRestart={() => runProjectAction(group.project, "restart")}
+                onStop={() => runProjectAction(group.project, "stop")}
+                onStart={() => runProjectAction(group.project, "start")}
+                onMarkRead={() => runProjectAction(group.project, "read")}
+              />
               {group.consoles.length === 0 ? <div className="empty-project">No consoles</div> : null}
               {group.consoles.map((item) => (
                 <ConsoleRow key={item.id} item={item} active={item.id === selectedId} onSelect={() => setSelectedId(item.id)} onClose={closeConsole} />
@@ -176,7 +249,14 @@ function App() {
       </aside>
       <section className="workspace">
         {selected ? (
-          <TerminalPane consoleRecord={selected} onChanged={refresh} onRename={renameConsole} onClose={() => closeConsole(selected.id)} />
+          <TerminalPane
+            consoleRecord={selected}
+            debugMode={debugMode}
+            onChanged={refresh}
+            onRename={renameConsole}
+            onClose={() => closeConsole(selected.id)}
+            onMarkRead={() => markConsoleRead(selected.id)}
+          />
         ) : (
           <div className="blank">Select or create a console</div>
         )}
@@ -188,6 +268,20 @@ function App() {
           Working directory
           <input id="folder-path" name="folderPath" value={folderPath} onChange={(event) => setFolderPath(event.target.value)} />
         </label>
+        <div className="recent-projects">
+          {filteredRecentProjects.length === 0 ? <div className="recent-empty">No recent projects</div> : null}
+          {filteredRecentProjects.map((project) => (
+            <RecentProjectRow
+              key={project.path}
+              project={project}
+              onSelect={() => setFolderPath(project.path)}
+              onClose={async () => {
+                await closeProject(project.name);
+                await removeRecentProject(project.path);
+              }}
+            />
+          ))}
+        </div>
         <div className="dialog-actions">
           <DialogDismiss className="secondary-button">Cancel</DialogDismiss>
           <Button className="primary-button" onClick={openFolderConsole}>
@@ -228,6 +322,67 @@ function App() {
         </div>
       </Dialog>
     </main>
+  );
+}
+
+function ProjectHeader({
+  project,
+  onClose,
+  onRestart,
+  onStop,
+  onStart,
+  onMarkRead
+}: {
+  project: string;
+  onClose: (project: string) => Promise<void>;
+  onRestart: () => Promise<void>;
+  onStop: () => Promise<void>;
+  onStart: () => Promise<void>;
+  onMarkRead: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="project-header">
+      <h2>{project}</h2>
+      <div className="menu-wrap">
+        <button className="project-menu-button" title={`Project actions for ${project}`} aria-label={`Project actions for ${project}`} onClick={() => setOpen((value) => !value)}>
+          <MenuIcon />
+        </button>
+        {open ? (
+          <div className="dropdown-menu project-dropdown">
+            <button onClick={() => void onRestart()}>Restart all</button>
+            <button onClick={() => void onStop()}>Stop all</button>
+            <button onClick={() => void onStart()}>Start all</button>
+            <button onClick={() => void onMarkRead()}>All read</button>
+            <button onClick={() => void onClose(project)}>Close</button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RecentProjectRow({ project, onSelect, onClose }: { project: RecentProject; onSelect: () => void; onClose: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="recent-project-row">
+      <button className="recent-project-main" onClick={onSelect}>
+        <span>{project.name}</span>
+        <small>{project.path}</small>
+      </button>
+      <div className="menu-wrap">
+        <button className="project-menu-button" title={`Actions for ${project.name}`} aria-label={`Actions for ${project.name}`} onClick={() => setOpen((value) => !value)}>
+          <MenuIcon />
+        </button>
+        {open ? (
+          <div className="dropdown-menu recent-dropdown">
+            <button onClick={() => void onClose()}>Close</button>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -340,18 +495,23 @@ function EditableConsoleHeading({
 
 function TerminalPane({
   consoleRecord,
+  debugMode,
   onChanged,
   onRename,
-  onClose
+  onClose,
+  onMarkRead
 }: {
   consoleRecord: ConsoleRecord;
+  debugMode: boolean;
   onChanged: () => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
   onClose: () => Promise<void>;
+  onMarkRead: () => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const [errorMatches, setErrorMatches] = useState<ErrorMatch[]>([]);
 
   useEffect(() => {
     const terminal = new Terminal({
@@ -372,6 +532,10 @@ function TerminalPane({
     fetch(`/api/consoles/${consoleRecord.id}/output`)
       .then((response) => response.json())
       .then((data: { output: string }) => terminal.write(data.output));
+
+    fetch(`/api/consoles/${consoleRecord.id}`)
+      .then((response) => response.json())
+      .then((data: ConsoleSnapshot) => setErrorMatches(data.errorMatches ?? []));
 
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
@@ -397,6 +561,12 @@ function TerminalPane({
     };
   }, [consoleRecord.id]);
 
+  useEffect(() => {
+    fetch(`/api/consoles/${consoleRecord.id}`)
+      .then((response) => response.json())
+      .then((data: ConsoleSnapshot) => setErrorMatches(data.errorMatches ?? []));
+  }, [consoleRecord.id, consoleRecord.errorCount]);
+
   async function post(path: string, body: unknown = {}) {
     await fetch(`/api/consoles/${consoleRecord.id}/${path}`, {
       method: "POST",
@@ -417,13 +587,32 @@ function TerminalPane({
           </p>
         </div>
         <div className="toolbar-actions">
+          <button onClick={onMarkRead}>Mark read</button>
           <button onClick={() => post("signal", { signal: "ctrl+c" })}>Ctrl+C</button>
           <button onClick={() => post("restart")}>Restart</button>
           <button onClick={onClose}>Close</button>
         </div>
       </header>
       <div ref={hostRef} className="terminal-host" />
+      {debugMode ? <ErrorDebugPanel matches={errorMatches} /> : null}
     </div>
+  );
+}
+
+function ErrorDebugPanel({ matches }: { matches: ErrorMatch[] }) {
+  return (
+    <section className="debug-panel">
+      <h3>Error matches</h3>
+      {matches.length === 0 ? <div className="debug-empty">No matches</div> : null}
+      {matches.map((match) => (
+        <article key={match.id} className="debug-match">
+          <div>{match.line}</div>
+          <small>
+            {match.reason} - {new Date(match.createdAt).toLocaleTimeString()}
+          </small>
+        </article>
+      ))}
+    </section>
   );
 }
 

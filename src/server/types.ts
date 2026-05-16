@@ -4,18 +4,19 @@ export interface ConsoleCreateRequest {
   id?: string;
   name?: string;
   project?: string;
+  projectPath?: string;
   cwd?: string;
   command?: string;
   shell?: string;
   args?: string[];
   ansiParserEnabled?: boolean;
-  projectPath?: never;
 }
 
 export interface ConsoleDefinition {
   id: string;
   name: string;
   project: string;
+  projectPath?: string;
   cwd: string;
   command: string;
   shell: string;
@@ -27,6 +28,7 @@ export interface ConsoleRecord {
   id: string;
   name: string;
   project: string;
+  projectPath?: string;
   cwd: string;
   command: string;
   shell: string;
@@ -43,10 +45,12 @@ export interface ConsoleRecord {
 
 export interface ConsoleSnapshot extends ConsoleRecord {
   outputTail: string;
+  errorMatches: ErrorMatch[];
 }
 
 export interface ProjectSummary {
   name: string;
+  projectPath?: string;
   consoleCount: number;
   runningCount: number;
   readyCount: number;
@@ -56,6 +60,20 @@ export interface ProjectSummary {
 export interface TrackerResult {
   status: ConsoleStatus;
   errorCount: number;
+  matches: ErrorMatch[];
+}
+
+export interface ErrorMatch {
+  id: string;
+  createdAt: string;
+  line: string;
+  reason: string;
+}
+
+export interface RecentProject {
+  path: string;
+  name: string;
+  openedAt: string;
 }
 
 export interface AppSettings {

@@ -7,6 +7,7 @@ import { createApp } from "../src/server/api.js";
 import { ConsoleManager } from "../src/server/consoleManager.js";
 import { ConsoleStore } from "../src/server/consoleStore.js";
 import { LogStore } from "../src/server/logStore.js";
+import { ProjectStore } from "../src/server/projectStore.js";
 import { buildTerminalEnv, FakeTerminalFactory } from "../src/server/terminal.js";
 import type { AppSettings } from "../src/server/types.js";
 
@@ -66,10 +67,14 @@ describe("HTTP API", () => {
 
     const snapshot = await request(app).get(`/api/consoles/${created.body.id}`).expect(200);
     expect(snapshot.body.outputTail).toContain("hello");
-    expect(snapshot.body.unseenErrorCount).toBe(0);
+    expect(snapshot.body.unseenErrorCount).toBe(2);
+    expect(snapshot.body.errorMatches.map((item: { line: string }) => item.line)).toContain("error happened");
 
     const afterView = await request(app).get("/api/consoles").expect(200);
-    expect(afterView.body.consoles[0].unseenErrorCount).toBe(0);
+    expect(afterView.body.consoles[0].unseenErrorCount).toBe(2);
+
+    const read = await request(app).post(`/api/consoles/${created.body.id}/read`).expect(200);
+    expect(read.body.unseenErrorCount).toBe(0);
 
     const renamed = await request(app).post(`/api/consoles/${created.body.id}/name`).send({ name: "renamed dev" }).expect(200);
     expect(renamed.body.name).toBe("renamed dev");
@@ -105,6 +110,37 @@ describe("HTTP API", () => {
         consoleCount: 1
       })
     );
+  });
+
+  it("tracks recent projects, prevents duplicate opens and supports project actions", async () => {
+    fs.writeFileSync(path.join(dir, "my_wins.json"), JSON.stringify({ wins: { one: { cmd: "npm run one" }, two: { cmd: "npm run two" } } }), "utf8");
+    const settings = testSettings(dir);
+    const projectManager = new ConsoleManager(settings, new LogStore(settings), factory, undefined, new ProjectStore(settings));
+    const projectApp = createApp(projectManager);
+
+    const opened = await request(projectApp).post("/api/batch").send({ projectPath: dir }).expect(200);
+    expect(opened.body).toHaveLength(2);
+    expect(factory.sessions).toHaveLength(2);
+
+    const duplicate = await request(projectApp).post("/api/batch").send({ projectPath: dir }).expect(200);
+    expect(duplicate.body).toHaveLength(2);
+    expect(factory.sessions).toHaveLength(2);
+
+    const recent = await request(projectApp).get("/api/recent-projects").expect(200);
+    expect(recent.body.projects[0]).toMatchObject({ path: dir, name: path.basename(dir) });
+
+    factory.sessions[0].push("Build error\r\n");
+    await request(projectApp).post(`/api/projects/${path.basename(dir)}/read`).expect(200);
+    expect(projectManager.list(path.basename(dir)).every((item) => item.unseenErrorCount === 0)).toBe(true);
+
+    await request(projectApp).post(`/api/projects/${path.basename(dir)}/stop`).expect(200);
+    expect(projectManager.list(path.basename(dir)).every((item) => item.status === "exited")).toBe(true);
+
+    await request(projectApp).post(`/api/projects/${path.basename(dir)}/start`).expect(200);
+    expect(projectManager.list(path.basename(dir)).every((item) => item.status === "running")).toBe(true);
+
+    await request(projectApp).delete(`/api/projects/${path.basename(dir)}`).expect(200);
+    expect(projectManager.list(path.basename(dir))).toHaveLength(0);
   });
 
   it("validates batch projectPath", async () => {

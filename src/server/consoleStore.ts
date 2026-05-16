@@ -22,6 +22,7 @@ export class ConsoleStore {
       id: record.id,
       name: record.name,
       project: record.project,
+      projectPath: record.projectPath,
       cwd: record.cwd,
       command: record.command,
       shell: record.shell,

@@ -3,11 +3,12 @@ import { createApp, attachWebSocket } from "./api.js";
 import { ConsoleManager } from "./consoleManager.js";
 import { ConsoleStore } from "./consoleStore.js";
 import { LogStore } from "./logStore.js";
+import { ProjectStore } from "./projectStore.js";
 import { loadSettings } from "./settings.js";
 import { NodePtyTerminalFactory } from "./terminal.js";
 
 const settings = loadSettings();
-const manager = new ConsoleManager(settings, new LogStore(settings), new NodePtyTerminalFactory(), new ConsoleStore(settings));
+const manager = new ConsoleManager(settings, new LogStore(settings), new NodePtyTerminalFactory(), new ConsoleStore(settings), new ProjectStore(settings));
 const app = createApp(manager);
 const server = http.createServer(app);
 attachWebSocket(server, manager);

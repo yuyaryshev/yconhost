@@ -7,6 +7,7 @@ yconhost is a local web UI/API for supervising host command processes through a 
 - Start, list, restart, and stop individual consoles.
 - Rename consoles inline from the console detail header; console definitions are persisted and recreated after yconhost restart.
 - Batch-start project consoles from `mywins.json` or `my_wins.json`.
+- Keep a persisted recent-project list, prevent duplicate project opens, and run project-wide start/stop/restart/read/close actions.
 - Stream live terminal output over WebSocket.
 - Render interactive terminals in the browser with xterm.js.
 - Start pty sessions with `xterm-256color`/truecolor environment hints for color-capable CLI tools.
@@ -14,6 +15,7 @@ yconhost is a local web UI/API for supervising host command processes through a 
 - Persist console output logs under `data/logs`.
 - Rotate logs and keep bounded in-memory scrollback.
 - Detect errors from plain text and ANSI-colored output.
+- Inspect exact error-matched lines in debug mode and reset unread error counters from the UI.
 - Disable ANSI error parsing per console.
 - Expose HTTP endpoints and a minimal HTTP MCP endpoint.
 - Run as a production pm2 process.
@@ -32,6 +34,7 @@ The production pm2 config is in `ecosystem.config.cjs` and currently binds to `1
 
 - `GET /api/health`
 - `GET /api/projects`
+- `GET /api/recent-projects`
 - `GET /api/consoles`
 - `POST /api/consoles`
 - `POST /api/batch`
@@ -39,9 +42,15 @@ The production pm2 config is in `ecosystem.config.cjs` and currently binds to `1
 - `GET /api/consoles/:id/output`
 - `POST /api/consoles/:id/input`
 - `POST /api/consoles/:id/name`
+- `POST /api/consoles/:id/read`
 - `POST /api/consoles/:id/signal`
 - `POST /api/consoles/:id/restart`
 - `DELETE /api/consoles/:id`
+- `POST /api/projects/:project/restart`
+- `POST /api/projects/:project/stop`
+- `POST /api/projects/:project/start`
+- `POST /api/projects/:project/read`
+- `DELETE /api/projects/:project`
 - `POST /mcp`
 
 ## Current Limitations

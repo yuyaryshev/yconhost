@@ -123,8 +123,38 @@ h2 {
 
 .project-group h2 {
   color: #5d6b77;
-  padding: 8px 6px;
   text-transform: uppercase;
+}
+
+.project-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+}
+
+.project-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #66737f;
+  cursor: pointer;
+}
+
+.project-menu-button .button-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.project-dropdown,
+.recent-dropdown {
+  top: 30px;
 }
 
 .console-row {
@@ -197,7 +227,7 @@ h2 {
 
 .terminal-layout {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100vh;
 }
 
@@ -332,6 +362,86 @@ h2 {
   border-radius: 6px;
   padding: 6px 9px;
   color: #1c2329;
+}
+
+.recent-projects {
+  display: grid;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+}
+
+.recent-empty {
+  padding: 10px;
+  color: #71808d;
+  font-size: 13px;
+}
+
+.recent-project-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-bottom: 1px solid #edf0f2;
+}
+
+.recent-project-row:last-child {
+  border-bottom: 0;
+}
+
+.recent-project-main {
+  display: grid;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  color: #1c2329;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-project-main span,
+.recent-project-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-project-main small {
+  color: #6b7884;
+}
+
+.debug-panel {
+  max-height: 190px;
+  overflow: auto;
+  border-top: 1px solid #2e353d;
+  background: #171b20;
+  color: #dfe5ea;
+  padding: 10px 12px;
+}
+
+.debug-panel h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.debug-empty {
+  color: #8d99a3;
+  font-size: 13px;
+}
+
+.debug-match {
+  display: grid;
+  gap: 3px;
+  border-top: 1px solid #2e353d;
+  padding: 7px 0;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.debug-match small {
+  color: #97a4af;
+  font-family: inherit;
 }
 
 .dialog-actions {
