@@ -253,3 +253,192 @@ If persistence is needed later:
 - Client-only extraction means cards are not available until a browser observes the output.
 - Server-side unread counters may not exactly match client-side cards until the architecture is unified.
 - Clear scrollback can remove terminal lines while persistent cards intentionally remain visible.
+
+## Backend Headless Xterm Variant
+
+The client-only design above has an important weakness for yconhost: the real parsing and unread counters currently live on the backend, while browser xterm exists only when a UI page is open.
+
+If extracted cards must be available server-side, the better architecture is to run a second terminal emulator on the backend in headless mode. This avoids writing a custom ANSI/VT parser and keeps the extraction based on rendered terminal state rather than raw stdout chunks.
+
+Use the modern xterm package:
+
+```bash
+pnpm add @xterm/headless
+```
+
+Note: the older `xterm-headless` package exists, but npm marks it deprecated and recommends moving to `@xterm/headless`. Keep `@xterm/headless` version aligned with `@xterm/xterm` when possible.
+
+Suggested backend mirror:
+
+```ts
+import { Terminal } from "@xterm/headless";
+
+const mirror = new Terminal({
+  cols: 120,
+  rows: 40,
+  scrollback: 10000
+});
+
+pty.onData((chunk) => {
+  mirror.write(chunk);       // backend rendered state
+  websocketBroadcast(chunk); // frontend xterm UI
+});
+```
+
+The resulting architecture:
+
+```text
+PTY output
+  -> browser xterm          // interactive UI
+  -> backend headless xterm // rendered state for extraction
+```
+
+The card extractor then reads:
+
+- `mirror.buffer.normal`
+- `mirror.buffer.active`
+- `mirror.buffer.alternate`
+- `mirror.onWriteParsed`
+- `mirror.rows`
+
+This makes the server-side extractor very similar to the client-side extractor described earlier.
+
+## Backend Mirror Requirements
+
+The backend mirror must stay dimensionally close to the browser terminal:
+
+- When the client sends resize events, resize both the PTY and the backend headless terminal.
+- If several clients watch the same console at different sizes, choose a canonical backend size. A practical default is the last active client size, with a fallback such as `120x40`.
+- Card extraction should tolerate wrap differences because browser width and backend width may still diverge.
+
+The WebSocket protocol should grow a resize message if it is not already wired end-to-end:
+
+```ts
+{ type: "resize", consoleId, cols, rows }
+```
+
+Server handling should apply:
+
+```ts
+session.resize(cols, rows);
+mirror.resize(cols, rows);
+```
+
+## Backend Persistent And Temporary Cards
+
+With a headless mirror, the server can own both `persistentCards` and `temporaryCards`.
+
+Persistent scan:
+
+```ts
+const buffer = mirror.buffer.normal;
+const start = lastScannedFinalY;
+const end = buffer.baseY;
+```
+
+Temporary scan:
+
+```ts
+if (mirror.buffer.active === mirror.buffer.alternate) {
+  temporaryCards = [];
+  return;
+}
+
+const buffer = mirror.buffer.normal;
+const start = buffer.baseY;
+const end = buffer.baseY + mirror.rows;
+```
+
+The same deduplication rules apply:
+
+- Add only new hashes to `persistentCards`.
+- Rebuild `temporaryCards` on every scan.
+- Hide temporary cards whose hash already exists in persistent cards.
+
+## Revised Recommended Architecture
+
+For yconhost, the backend headless approach is probably the better long-term design:
+
+```text
+node-pty session
+  -> log store, raw bytes
+  -> browser xterm, UI
+  -> @xterm/headless mirror, backend rendered buffer
+       -> finalized scrollback extraction
+       -> visible normal screen extraction
+       -> persistent/temporary cards API
+```
+
+The browser should render cards received from the server, not derive its own canonical cards.
+
+Suggested API shape:
+
+```http
+GET /api/consoles/:id/cards
+```
+
+Response:
+
+```ts
+type ConsoleCardsResponse = {
+  persistentCards: ExtractedCard[];
+  temporaryCards: ExtractedCard[];
+};
+```
+
+The existing console snapshot could also include these arrays, but a separate endpoint is cleaner because cards may refresh more often than console metadata.
+
+## Revised Implementation Plan
+
+1. Add `@xterm/headless`.
+2. Add a `HeadlessTerminalMirror` wrapper around `@xterm/headless`.
+3. Store one mirror per managed console.
+4. On every PTY output chunk, write the chunk to both log storage and the mirror before broadcasting.
+5. Use `mirror.onWriteParsed` to schedule a throttled scan.
+6. Implement `extractCardsFromBufferRange(...)`.
+7. Store `persistentCards`, `temporaryCards`, `lastScannedFinalY`, and card hashes per console.
+8. Add resize handling from browser to server and apply it to PTY plus mirror.
+9. Add `GET /api/consoles/:id/cards`.
+10. Render a collapsible cards panel outside xterm.
+11. Keep the existing raw parser only as a temporary compatibility path, or replace unread counters with counts derived from cards.
+
+## Backend Variant Tradeoffs
+
+Advantages:
+
+- Cards exist even if no browser is open.
+- Server-side unread counters can be derived from the same card source.
+- No custom ANSI parser.
+- Extraction works on rendered terminal state, not raw stdout.
+
+Costs:
+
+- More memory per console because each console has an additional terminal buffer.
+- Resize semantics become important.
+- Backend and frontend xterm dimensions can diverge.
+- Need to keep `@xterm/headless` and `@xterm/xterm` reasonably aligned.
+- Click-to-scroll still requires client-side mapping or backend-provided approximate line references.
+
+## Click-To-Scroll With Backend Cards
+
+Backend cards can store approximate buffer positions:
+
+```ts
+type ExtractedCard = {
+  id: string;
+  kind: "persistent" | "temporary";
+  category: "error" | "warning" | "info" | "message";
+  title: string;
+  message: string;
+  rawText: string;
+  hash: string;
+  createdAt: number;
+  bufferY?: number;
+};
+```
+
+However, browser xterm may have a different width and therefore different wrapping/line positions. Treat backend `bufferY` as a hint, not a perfect coordinate.
+
+Reliable highlighting would still need a client-side marker/decorations layer for lines that are observed by the browser while open. For old cards created only on the backend, jump-to-card can be approximate unless the frontend restores the same serialized terminal state.
+
+If exact restoration becomes necessary, investigate `@xterm/addon-serialize` compatibility with the headless backend mirror.
