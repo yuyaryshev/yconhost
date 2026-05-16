@@ -5,8 +5,9 @@ import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/server/api.js";
 import { ConsoleManager } from "../src/server/consoleManager.js";
+import { ConsoleStore } from "../src/server/consoleStore.js";
 import { LogStore } from "../src/server/logStore.js";
-import { FakeTerminalFactory } from "../src/server/terminal.js";
+import { buildTerminalEnv, FakeTerminalFactory } from "../src/server/terminal.js";
 import type { AppSettings } from "../src/server/types.js";
 
 function testSettings(dataDir: string): AppSettings {
@@ -42,6 +43,15 @@ describe("HTTP API", () => {
     expect(response.body.ok).toBe(true);
   });
 
+  it("builds a color-capable terminal environment", () => {
+    const env = buildTerminalEnv({ NO_COLOR: "1" });
+    expect(env.TERM).toBe("xterm-256color");
+    expect(env.COLORTERM).toBe("truecolor");
+    expect(env.FORCE_COLOR).toBe("1");
+    expect(env.CLICOLOR_FORCE).toBe("1");
+    expect(env.NO_COLOR).toBeUndefined();
+  });
+
   it("creates, lists, reads, writes and deletes a console", async () => {
     const created = await request(app).post("/api/consoles").send({ name: "dev", command: "echo ok", project: "Default", cwd: dir }).expect(200);
     expect(created.body.name).toBe("dev");
@@ -60,6 +70,9 @@ describe("HTTP API", () => {
 
     const afterView = await request(app).get("/api/consoles").expect(200);
     expect(afterView.body.consoles[0].unseenErrorCount).toBe(0);
+
+    const renamed = await request(app).post(`/api/consoles/${created.body.id}/name`).send({ name: "renamed dev" }).expect(200);
+    expect(renamed.body.name).toBe("renamed dev");
 
     const output = await request(app).get(`/api/consoles/${created.body.id}/output`).expect(200);
     expect(output.body.output).toContain("hello");
@@ -96,6 +109,23 @@ describe("HTTP API", () => {
 
   it("validates batch projectPath", async () => {
     await request(app).post("/api/batch").send({}).expect(400);
+  });
+
+  it("persists renamed console definitions across manager restart by recreating them", async () => {
+    const settings = testSettings(dir);
+    const store = new ConsoleStore(settings);
+    const firstFactory = new FakeTerminalFactory();
+    const firstManager = new ConsoleManager(settings, new LogStore(settings), firstFactory, store);
+    const created = firstManager.create({ name: "before rename", command: "echo ok", cwd: dir });
+    firstManager.rename(created.id, "after rename");
+
+    const secondFactory = new FakeTerminalFactory();
+    const secondManager = new ConsoleManager(settings, new LogStore(settings), secondFactory, store);
+    const list = secondManager.list();
+
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: created.id, name: "after rename", command: "echo ok", cwd: dir });
+    expect(secondFactory.sessions).toHaveLength(1);
   });
 
   it("supports signals, restart and MCP tools", async () => {

@@ -4,6 +4,7 @@ import path from "node:path";
 import JSON5 from "json5";
 import { analyzeOutput } from "./outputAnalyzer.js";
 import type { LogStore } from "./logStore.js";
+import type { ConsoleStore } from "./consoleStore.js";
 import type { TerminalFactory, TerminalSession } from "./terminal.js";
 import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleRecord, ConsoleSnapshot, ProjectSummary } from "./types.js";
 
@@ -22,8 +23,13 @@ export class ConsoleManager {
   constructor(
     private readonly settings: AppSettings,
     private readonly logs: LogStore,
-    private readonly terminalFactory: TerminalFactory
-  ) {}
+    private readonly terminalFactory: TerminalFactory,
+    private readonly store?: ConsoleStore
+  ) {
+    for (const definition of this.store?.load() ?? []) {
+      this.create(definition);
+    }
+  }
 
   onOutput(listener: OutputListener): () => void {
     this.listeners.add(listener);
@@ -60,7 +66,7 @@ export class ConsoleManager {
     if (request.projectPath) {
       throw new Error("Use /api/batch to create consoles from a project path");
     }
-    const id = crypto.randomUUID();
+    const id = request.id ?? crypto.randomUUID();
     const cwd = path.resolve(request.cwd ?? process.cwd());
     const shell = request.shell ?? this.settings.defaultShell;
     const args = request.args ?? (request.command ? commandArgs(shell, request.command) : []);
@@ -86,6 +92,7 @@ export class ConsoleManager {
     record.status = "running";
     const managed: ManagedConsole = { record, session, tail: this.logs.read(id).slice(-this.settings.log.scrollbackBytes) };
     this.consoles.set(id, managed);
+    this.persist();
 
     session.onData((chunk) => this.capture(id, chunk));
     session.onExit((exitCode) => {
@@ -96,6 +103,18 @@ export class ConsoleManager {
     });
 
     return record;
+  }
+
+  rename(id: string, name: string): ConsoleRecord {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new Error("Console name is required");
+    }
+    const item = this.requireConsole(id);
+    item.record.name = trimmed;
+    item.record.updatedAt = new Date().toISOString();
+    this.persist();
+    return item.record;
   }
 
   createBatch(projectPath: string, fileName?: string): ConsoleRecord[] {
@@ -131,6 +150,7 @@ export class ConsoleManager {
     const item = this.requireConsole(id);
     item.session.write(data);
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
   }
 
   signal(id: string, signal: string): void {
@@ -143,6 +163,7 @@ export class ConsoleManager {
       item.session.kill(signal);
     }
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
   }
 
   restart(id: string): ConsoleRecord {
@@ -158,6 +179,7 @@ export class ConsoleManager {
     };
     old.session.kill();
     this.consoles.delete(id);
+    this.persist();
     return this.create(request);
   }
 
@@ -165,6 +187,7 @@ export class ConsoleManager {
     const item = this.requireConsole(id);
     item.session.kill();
     this.consoles.delete(id);
+    this.persist();
   }
 
   private capture(id: string, chunk: string): void {
@@ -178,6 +201,7 @@ export class ConsoleManager {
     item.record.unseenErrorCount += Math.max(0, delta);
     item.record.status = result.status;
     item.record.updatedAt = new Date().toISOString();
+    this.persist();
     this.emit(id, chunk);
   }
 
@@ -193,6 +217,10 @@ export class ConsoleManager {
       throw new Error(`Console ${id} not found`);
     }
     return item;
+  }
+
+  private persist(): void {
+    this.store?.save(this.list());
   }
 }
 

@@ -5,9 +5,11 @@ yconhost is a local web UI/API for supervising host command processes through a 
 ## Main Features
 
 - Start, list, restart, and stop individual consoles.
+- Rename consoles inline from the console detail header; console definitions are persisted and recreated after yconhost restart.
 - Batch-start project consoles from `mywins.json` or `my_wins.json`.
 - Stream live terminal output over WebSocket.
 - Render interactive terminals in the browser with xterm.js.
+- Start pty sessions with `xterm-256color`/truecolor environment hints for color-capable CLI tools.
 - Send plain text input and special commands such as `Ctrl+C` and `Ctrl+Break`.
 - Persist console output logs under `data/logs`.
 - Rotate logs and keep bounded in-memory scrollback.
@@ -36,6 +38,7 @@ The production pm2 config is in `ecosystem.config.cjs` and currently binds to `1
 - `GET /api/consoles/:id`
 - `GET /api/consoles/:id/output`
 - `POST /api/consoles/:id/input`
+- `POST /api/consoles/:id/name`
 - `POST /api/consoles/:id/signal`
 - `POST /api/consoles/:id/restart`
 - `DELETE /api/consoles/:id`

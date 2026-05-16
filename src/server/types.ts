@@ -1,6 +1,7 @@
 export type ConsoleStatus = "starting" | "running" | "ready" | "exited";
 
 export interface ConsoleCreateRequest {
+  id?: string;
   name?: string;
   project?: string;
   cwd?: string;
@@ -9,6 +10,17 @@ export interface ConsoleCreateRequest {
   args?: string[];
   ansiParserEnabled?: boolean;
   projectPath?: never;
+}
+
+export interface ConsoleDefinition {
+  id: string;
+  name: string;
+  project: string;
+  cwd: string;
+  command: string;
+  shell: string;
+  args: string[];
+  ansiParserEnabled: boolean;
 }
 
 export interface ConsoleRecord {

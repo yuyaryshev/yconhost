@@ -5,9 +5,11 @@ yconhost - локальный Web UI/API для управления консо�
 ## Основные возможности
 
 - Создание, просмотр, перезапуск и остановка отдельных консолей.
+- Inline-переименование консолей в заголовке деталей; определения консолей сохраняются и пересоздаются после рестарта yconhost.
 - Пакетный запуск консолей проекта из `mywins.json` или `my_wins.json`.
 - Live streaming вывода терминала через WebSocket.
 - Отображение интерактивных терминалов в браузере через xterm.js.
+- Запуск pty-сессий с `xterm-256color`/truecolor env hints для CLI-инструментов с цветным выводом.
 - Отправка обычного текста и специальных команд, включая `Ctrl+C` и `Ctrl+Break`.
 - Сохранение истории вывода в `data/logs`.
 - Ротация логов и ограниченный in-memory scrollback.
@@ -36,6 +38,7 @@ Production-конфиг pm2 находится в `ecosystem.config.cjs` и се
 - `GET /api/consoles/:id`
 - `GET /api/consoles/:id/output`
 - `POST /api/consoles/:id/input`
+- `POST /api/consoles/:id/name`
 - `POST /api/consoles/:id/signal`
 - `POST /api/consoles/:id/restart`
 - `DELETE /api/consoles/:id`

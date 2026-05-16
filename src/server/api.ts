@@ -60,6 +60,8 @@ export function createApp(manager: ConsoleManager): express.Express {
 
   app.post("/api/consoles/:id/restart", route(respond((req) => manager.restart(param(req, "id")))));
 
+  app.post("/api/consoles/:id/name", route(respond((req) => manager.rename(param(req, "id"), String(req.body.name ?? "")))));
+
   app.delete(
     "/api/consoles/:id",
     route(

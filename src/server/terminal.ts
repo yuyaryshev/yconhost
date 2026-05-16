@@ -19,10 +19,10 @@ export class NodePtyTerminalFactory implements TerminalFactory {
   spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): TerminalSession {
     const term = pty.spawn(shell, args, {
       cwd: options.cwd,
-      env: options.env,
+      env: buildTerminalEnv(options.env),
       cols: 120,
       rows: 30,
-      name: "xterm-color",
+      name: "xterm-256color",
       useConpty: process.platform === "win32"
     });
 
@@ -41,6 +41,17 @@ export class NodePtyTerminalFactory implements TerminalFactory {
       onExit: (listener) => term.onExit((event) => listener(event.exitCode))
     };
   }
+}
+
+export function buildTerminalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv };
+  env.TERM = "xterm-256color";
+  env.COLORTERM = "truecolor";
+  env.FORCE_COLOR = env.FORCE_COLOR ?? "1";
+  env.CLICOLOR = env.CLICOLOR ?? "1";
+  env.CLICOLOR_FORCE = env.CLICOLOR_FORCE ?? "1";
+  delete env.NO_COLOR;
+  return env;
 }
 
 export class FakeTerminalSession extends EventEmitter implements TerminalSession {
