@@ -27,6 +27,13 @@ export class ConsoleStore {
       command: record.command,
       shell: record.shell,
       args: record.args,
+      noRun: record.noRun,
+      autoStartOnOpen: record.autoStartOnOpen,
+      status: record.status,
+      lastInputAt: record.lastInputAt,
+      lastOutputAt: record.lastOutputAt,
+      background: record.background,
+      backgroundColor: record.backgroundColor,
       ansiParserEnabled: record.ansiParserEnabled
     }));
     fs.writeFileSync(this.file, `${JSON.stringify(definitions, null, 2)}\n`, "utf8");

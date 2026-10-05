@@ -4,3 +4,4 @@ data/
 coverage/
 .vite/
 *.log
+.idea/

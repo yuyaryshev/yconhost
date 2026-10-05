@@ -7,7 +7,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         YCONHOST_HOST: "127.0.0.1",
-        YCONHOST_PORT: "4010"
+        YCONHOST_PORT: "4011"
       }
     }
   ]

@@ -3,10 +3,23 @@
   host: "127.0.0.1",
   dataDir: "./data",
   defaultShell: "cmd.exe",
+  terminal: {
+    cols: 160,
+    rows: 40,
+    scrollback: 0
+  },
   log: {
-    maxBytes: 5242880,
-    rotateFiles: 5,
-    scrollbackBytes: 1048576,
-    trackerTailChars: 1000
+    maxBytes: 10485760,
+    rotateFiles: 3,
+    scrollbackBytes: 1048576
+  },
+  cards: {
+    maxPerConsole: 500,
+    scanTailBytes: 10485760
+  },
+  codexContexts: {
+    projectName: "codexes",
+    contextsPath: "D:\\b\\InfoVault\\Codex contexts.md",
+    weztermPresetsPath: "D:\\ProgsReady\\WezTerm\\yy_wezterm_codexes.lua"
   }
 }

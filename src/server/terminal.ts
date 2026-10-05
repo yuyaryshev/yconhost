@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { spawn as spawnChild } from "node:child_process";
 import pty from "node-pty";
 import treeKill from "tree-kill";
 
@@ -12,16 +13,16 @@ export interface TerminalSession {
 }
 
 export interface TerminalFactory {
-  spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): TerminalSession;
+  spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; cols: number; rows: number }): TerminalSession;
 }
 
-export class NodePtyTerminalFactory implements TerminalFactory {
-  spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): TerminalSession {
+export class PtyTerminalFactory implements TerminalFactory {
+  spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; cols: number; rows: number }): TerminalSession {
     const term = pty.spawn(shell, args, {
       cwd: options.cwd,
       env: buildTerminalEnv(options.env),
-      cols: 120,
-      rows: 30,
+      cols: options.cols,
+      rows: options.rows,
       name: "xterm-256color",
       useConpty: process.platform === "win32"
     });
@@ -32,7 +33,7 @@ export class NodePtyTerminalFactory implements TerminalFactory {
       resize: (cols, rows) => term.resize(cols, rows),
       kill: (signal) => {
         if (term.pid) {
-          treeKill(term.pid, signal ?? "SIGTERM", () => undefined);
+          killProcessTree(term.pid, signal);
         } else {
           term.kill();
         }
@@ -41,6 +42,19 @@ export class NodePtyTerminalFactory implements TerminalFactory {
       onExit: (listener) => term.onExit((event) => listener(event.exitCode))
     };
   }
+}
+
+function killProcessTree(pid: number, signal?: string): void {
+  if (process.platform === "win32") {
+    const child = spawnChild("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => undefined);
+    return;
+  }
+
+  treeKill(pid, signal ?? "SIGTERM", () => undefined);
 }
 
 export function buildTerminalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -58,14 +72,17 @@ export class FakeTerminalSession extends EventEmitter implements TerminalSession
   readonly pid = Math.floor(Math.random() * 10000) + 1000;
   readonly writes: string[] = [];
   killed = false;
+  cols = 120;
+  rows = 40;
 
   write(data: string): void {
     this.writes.push(data);
     this.emit("data", data);
   }
 
-  resize(): void {
-    return;
+  resize(cols: number, rows: number): void {
+    this.cols = cols;
+    this.rows = rows;
   }
 
   kill(): void {
@@ -89,8 +106,9 @@ export class FakeTerminalSession extends EventEmitter implements TerminalSession
 export class FakeTerminalFactory implements TerminalFactory {
   readonly sessions: FakeTerminalSession[] = [];
 
-  spawn(): TerminalSession {
+  spawn(_shell: string, _args: string[], options: { cols: number; rows: number }): TerminalSession {
     const session = new FakeTerminalSession();
+    session.resize(options.cols, options.rows);
     this.sessions.push(session);
     return session;
   }
