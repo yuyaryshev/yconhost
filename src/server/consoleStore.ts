@@ -32,6 +32,8 @@ export class ConsoleStore {
       status: record.status,
       lastInputAt: record.lastInputAt,
       lastOutputAt: record.lastOutputAt,
+      lastAccessedAt: record.lastAccessedAt,
+      persistent: record.persistent,
       background: record.background,
       backgroundColor: record.backgroundColor,
       ansiParserEnabled: record.ansiParserEnabled

@@ -26,6 +26,10 @@ const defaults: AppSettings = {
     projectName: "codexes",
     contextsPath: "D:\\b\\InfoVault\\Codex contexts.md",
     weztermPresetsPath: "D:\\ProgsReady\\WezTerm\\yy_wezterm_codexes.lua"
+  },
+  temporaryConsoles: {
+    ttlHours: 4,
+    cleanupIntervalMs: 60_000
   }
 };
 
@@ -48,6 +52,10 @@ function mergeSettings(value: Partial<AppSettings>): AppSettings {
     codexContexts: {
       ...defaults.codexContexts,
       ...(value.codexContexts ?? {})
+    },
+    temporaryConsoles: {
+      ...defaults.temporaryConsoles,
+      ...(value.temporaryConsoles ?? {})
     }
   };
 }

@@ -237,6 +237,8 @@ Minimal HTTP MCP API:
 - read console output;
 - write console input.
 
+MCP `create_console` and `register_console` create temporary consoles by default. Pass `persistent: true` to keep a console slot. A temporary console is removed automatically after the configured idle TTL when it has no live terminal session and has had no direct access, input, or output during that TTL.
+
 ## 4. Target Architecture With Backend Headless Xterm
 
 If rich message/error cards become a core feature, the target architecture should use backend headless xterm instead of custom ANSI parsing.

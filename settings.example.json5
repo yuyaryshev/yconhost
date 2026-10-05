@@ -21,5 +21,9 @@
     projectName: "codexes",
     contextsPath: "D:\\b\\InfoVault\\Codex contexts.md",
     weztermPresetsPath: "D:\\ProgsReady\\WezTerm\\yy_wezterm_codexes.lua"
+  },
+  temporaryConsoles: {
+    ttlHours: 4,
+    cleanupIntervalMs: 60000
   }
 }

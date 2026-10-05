@@ -15,6 +15,8 @@ export interface ConsoleCreateRequest {
   readCardHashes?: string[];
   lastInputAt?: string;
   lastOutputAt?: string;
+  lastAccessedAt?: string;
+  persistent?: boolean;
   background?: string;
   backgroundColor?: ThemeColorPair;
 }
@@ -38,6 +40,8 @@ export interface ConsoleDefinition {
   status?: ConsoleStatus;
   lastInputAt?: string;
   lastOutputAt?: string;
+  lastAccessedAt?: string;
+  persistent?: boolean;
   background?: string;
   backgroundColor?: ThemeColorPair;
   ansiParserEnabled: boolean;
@@ -65,6 +69,8 @@ export interface ConsoleRecord {
   updatedAt: string;
   lastInputAt?: string;
   lastOutputAt?: string;
+  lastAccessedAt?: string;
+  persistent?: boolean;
   background?: string;
   backgroundColor?: ThemeColorPair;
   exitCode?: number;
@@ -154,6 +160,10 @@ export interface AppSettings {
     projectName: string;
     contextsPath: string;
     weztermPresetsPath?: string;
+  };
+  temporaryConsoles: {
+    ttlHours: number;
+    cleanupIntervalMs: number;
   };
 }
 

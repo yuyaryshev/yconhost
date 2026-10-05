@@ -35,6 +35,10 @@ function testSettings(dataDir: string): AppSettings {
       projectName: "codexes",
       contextsPath: path.join(dataDir, "Codex contexts.md"),
       weztermPresetsPath: path.join(dataDir, "yy_wezterm_codexes.lua")
+    },
+    temporaryConsoles: {
+      ttlHours: 4,
+      cleanupIntervalMs: 60000
     }
   };
 }
@@ -215,11 +219,38 @@ describe("HTTP API", () => {
       .send({ method: "tools/call", params: { name: "register_console", arguments: { project: "mcp_project", name: "slot", command: "echo slot", cwd: dir } } })
       .expect(200);
     const slot = JSON.parse(registered.body.content[0].text);
-    expect(slot).toMatchObject({ project: "mcp_project", name: "slot", status: "idle", command: "echo slot" });
+    expect(slot).toMatchObject({ project: "mcp_project", name: "slot", status: "idle", command: "echo slot", persistent: false });
     expect(managedFactory.sessions).toHaveLength(0);
 
     const reloadedManager = new ConsoleManager(settings, new LogStore(settings), new FakeTerminalFactory(), undefined, projectStore);
     expect(reloadedManager.listProjects()).toContainEqual(expect.objectContaining({ name: "mcp_project" }));
+  });
+
+  it("treats MCP-created console slots as temporary unless persistent is requested", async () => {
+    const settings = testSettings(dir);
+    settings.temporaryConsoles.ttlHours = 4;
+    const managedFactory = new FakeTerminalFactory();
+    const managedManager = new ConsoleManager(settings, new LogStore(settings), managedFactory, undefined, new ProjectStore(settings));
+    const managedApp = createApp(managedManager, { pm2: false });
+
+    const temporary = await request(managedApp)
+      .post("/mcp")
+      .send({ method: "tools/call", params: { name: "register_console", arguments: { project: "scratch", name: "temp", command: "echo temp", cwd: dir } } })
+      .expect(200);
+    const tempSlot = JSON.parse(temporary.body.content[0].text);
+    expect(tempSlot).toMatchObject({ project: "scratch", name: "temp", status: "idle", persistent: false });
+
+    const permanent = await request(managedApp)
+      .post("/mcp")
+      .send({ method: "tools/call", params: { name: "register_console", arguments: { project: "scratch", name: "keep", command: "echo keep", cwd: dir, persistent: true } } })
+      .expect(200);
+    const keepSlot = JSON.parse(permanent.body.content[0].text);
+    expect(keepSlot).toMatchObject({ project: "scratch", name: "keep", status: "idle", persistent: true });
+
+    const removed = managedManager.cleanupTemporaryConsoles(new Date(Date.now() + 5 * 60 * 60 * 1000));
+    expect(removed).toEqual([tempSlot.id]);
+    expect(() => managedManager.get(tempSlot.id)).toThrow(/not found/);
+    expect(managedManager.get(keepSlot.id)).toMatchObject({ id: keepSlot.id, persistent: true });
   });
 
   it("imports Codex contexts as idle colored slots and starts only on explicit start", async () => {

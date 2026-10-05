@@ -193,8 +193,8 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
             { name: "write_console", inputSchema: { type: "object", properties: { id: { type: "string" }, data: { type: "string" } }, required: ["id", "data"] } },
             { name: "send_console_command", description: "Send a command line to an existing running console and return immediately without waiting for completion.", inputSchema: { type: "object", properties: { id: { type: "string" }, command: { type: "string" } }, required: ["id", "command"] } },
             { name: "run_console_command", description: "Run a command line in an existing running console, wait until a completion marker is printed, and return captured output plus exitCode. timeoutMs defaults to 30000.", inputSchema: { type: "object", properties: { id: { type: "string" }, command: { type: "string" }, timeoutMs: { type: "number" } }, required: ["id", "command"] } },
-            { name: "create_console", inputSchema: { type: "object", properties: { name: { type: "string" }, project: { type: "string" }, projectPath: { type: "string" }, cwd: { type: "string" }, command: { type: "string" }, shell: { type: "string" }, args: { type: "array", items: { type: "string" } }, noRun: { type: "boolean" }, ansiParserEnabled: { type: "boolean" } } } },
-            { name: "register_console", description: "Register a console slot in an MCP/UI-managed project without using mywins.json. By default it is idle; pass start=true to launch it immediately.", inputSchema: { type: "object", properties: { project: { type: "string" }, name: { type: "string" }, projectPath: { type: "string" }, cwd: { type: "string" }, command: { type: "string" }, shell: { type: "string" }, args: { type: "array", items: { type: "string" } }, noRun: { type: "boolean" }, start: { type: "boolean" }, ansiParserEnabled: { type: "boolean" } }, required: ["project"] } },
+            { name: "create_console", description: "Create and start a console. MCP-created consoles are temporary by default and self-delete after the configured idle TTL; pass persistent=true to keep one.", inputSchema: { type: "object", properties: { name: { type: "string" }, project: { type: "string" }, projectPath: { type: "string" }, cwd: { type: "string" }, command: { type: "string" }, shell: { type: "string" }, args: { type: "array", items: { type: "string" } }, noRun: { type: "boolean" }, persistent: { type: "boolean" }, ansiParserEnabled: { type: "boolean" } } } },
+            { name: "register_console", description: "Register a console slot in an MCP/UI-managed project without using mywins.json. By default it is idle and temporary; pass start=true to launch it immediately or persistent=true to keep it.", inputSchema: { type: "object", properties: { project: { type: "string" }, name: { type: "string" }, projectPath: { type: "string" }, cwd: { type: "string" }, command: { type: "string" }, shell: { type: "string" }, args: { type: "array", items: { type: "string" } }, noRun: { type: "boolean" }, start: { type: "boolean" }, persistent: { type: "boolean" }, ansiParserEnabled: { type: "boolean" } }, required: ["project"] } },
             { name: "close_console", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
             { name: "restart_console", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
             { name: "start_console", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
@@ -268,11 +268,11 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
             return;
           }
           if (name === "create_console") {
-            content(JSON.stringify(manager.create(args), null, 2));
+            content(JSON.stringify(manager.create({ ...args, persistent: args.persistent === true }), null, 2));
             return;
           }
           if (name === "register_console") {
-            content(JSON.stringify(manager.registerConsole(args), null, 2));
+            content(JSON.stringify(manager.registerConsole({ ...args, persistent: args.persistent === true }), null, 2));
             return;
           }
           if (name === "close_console") {

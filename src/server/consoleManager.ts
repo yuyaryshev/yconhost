@@ -29,6 +29,7 @@ export class ConsoleManager {
   private readonly consoles = new Map<string, ManagedConsole>();
   private readonly listeners = new Set<OutputListener>();
   private persistTimer?: ReturnType<typeof setTimeout>;
+  private cleanupTimer?: ReturnType<typeof setInterval>;
   private readonly managedProjects = new Set<string>();
 
   constructor(
@@ -44,6 +45,7 @@ export class ConsoleManager {
     for (const definition of this.store?.load() ?? []) {
       this.createManaged(definition, false);
     }
+    this.startTemporaryCleanup();
   }
 
   onOutput(listener: OutputListener): () => void {
@@ -74,11 +76,13 @@ export class ConsoleManager {
 
   get(id: string): ConsoleSnapshot {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     return { ...item.record, outputTail: item.tail, errorMatches: cardsToMatches(item.cards), cards: item.cards };
   }
 
   getState(id: string, tailLines = 8): ConsoleSessionState {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     const safeTailLines = Math.max(1, Math.min(100, Math.floor(tailLines)));
     const tail = this.logs.readTail(id, safeTailLines);
     return { ...item.record, tail, tailLines: splitTailLines(tail) };
@@ -90,6 +94,8 @@ export class ConsoleManager {
 
   updateSettings(settings: AppSettings): AppSettings {
     this.settings = settings;
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    this.startTemporaryCleanup();
     for (const item of this.consoles.values()) {
       item.mirror.resize(settings.terminal.cols, settings.terminal.rows);
       item.session?.resize(settings.terminal.cols, settings.terminal.rows);
@@ -156,6 +162,8 @@ export class ConsoleManager {
       updatedAt: now,
       lastInputAt: request.lastInputAt,
       lastOutputAt: request.lastOutputAt,
+      lastAccessedAt: request.lastAccessedAt ?? now,
+      persistent: request.persistent ?? true,
       background: request.background,
       backgroundColor: request.backgroundColor ?? resolveConsoleBackground(request.background)
     };
@@ -228,6 +236,7 @@ export class ConsoleManager {
     existing.record.args = request.args ?? (request.command ? commandArgs(shell, request.command) : []);
     existing.record.noRun = request.noRun;
     existing.record.autoStartOnOpen = request.autoStartOnOpen;
+    existing.record.persistent = request.persistent ?? existing.record.persistent ?? true;
     existing.record.ansiParserEnabled = request.ansiParserEnabled ?? true;
     existing.record.background = request.background;
     existing.record.backgroundColor = request.backgroundColor ?? resolveConsoleBackground(request.background);
@@ -375,12 +384,14 @@ export class ConsoleManager {
   }
 
   readOutput(id: string, tailLines?: number): string {
-    this.requireConsole(id);
+    const item = this.requireConsole(id);
+    this.touchAccess(item);
     return tailLines ? this.logs.readTail(id, tailLines) : this.logs.read(id);
   }
 
   write(id: string, data: string): void {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
     }
@@ -393,6 +404,7 @@ export class ConsoleManager {
 
   async runCommand(id: string, command: string, options: { wait?: boolean; timeoutMs?: number } = {}): Promise<{ status: "started" | "completed"; id: string; command: string; output?: string; exitCode?: number; timedOut?: boolean }> {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
     }
@@ -446,6 +458,7 @@ export class ConsoleManager {
 
   resize(id: string, cols: number, rows: number): void {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     const safeCols = Math.max(20, Math.min(400, Math.floor(cols)));
     const safeRows = Math.max(5, Math.min(200, Math.floor(rows)));
     item.session?.resize(safeCols, safeRows);
@@ -455,6 +468,7 @@ export class ConsoleManager {
 
   signal(id: string, signal: string): void {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
     }
@@ -471,6 +485,7 @@ export class ConsoleManager {
 
   restart(id: string): ConsoleRecord {
     const old = this.requireConsole(id);
+    this.touchAccess(old);
     const request = this.requestFromRecord(old.record, true);
     old.session?.kill();
     return this.createManaged(request, true);
@@ -478,6 +493,7 @@ export class ConsoleManager {
 
   start(id: string): ConsoleRecord {
     const old = this.requireConsole(id);
+    this.touchAccess(old);
     if (old.session) return old.record;
     const request = this.requestFromRecord(old.record, true);
     return this.createManaged(request, true);
@@ -485,6 +501,7 @@ export class ConsoleManager {
 
   stop(id: string): void {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     if (item.session) {
       item.session.kill();
       item.session = undefined;
@@ -497,6 +514,7 @@ export class ConsoleManager {
 
   markRead(id: string): ConsoleRecord {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     item.record.unseenErrorCount = 0;
     for (const card of item.cards) {
       item.readHashes.add(card.hash);
@@ -549,6 +567,7 @@ export class ConsoleManager {
 
   kill(id: string): void {
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     item.session?.kill();
     if (item.record.project === "Default") {
       if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
@@ -611,6 +630,38 @@ export class ConsoleManager {
     return item;
   }
 
+  cleanupTemporaryConsoles(now = new Date()): string[] {
+    const ttlMs = temporaryConsoleTtlMs(this.settings);
+    if (ttlMs <= 0) return [];
+    const removed: string[] = [];
+    for (const item of [...this.consoles.values()]) {
+      if (item.record.persistent !== false) continue;
+      if (item.session) continue;
+      if (now.getTime() - lastConsoleActivityTime(item.record) < ttlMs) continue;
+      this.deleteManaged(item);
+      removed.push(item.record.id);
+    }
+    if (removed.length > 0) this.persist();
+    return removed;
+  }
+
+  private touchAccess(item: ManagedConsole): void {
+    item.record.lastAccessedAt = new Date().toISOString();
+    this.schedulePersist();
+  }
+
+  private deleteManaged(item: ManagedConsole): void {
+    item.session?.kill();
+    if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
+    this.consoles.delete(item.record.id);
+  }
+
+  private startTemporaryCleanup(): void {
+    const intervalMs = Math.max(10_000, Math.floor(this.settings.temporaryConsoles.cleanupIntervalMs));
+    this.cleanupTimer = setInterval(() => this.cleanupTemporaryConsoles(), intervalMs);
+    this.cleanupTimer.unref?.();
+  }
+
   private persist(): void {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
@@ -643,6 +694,8 @@ export class ConsoleManager {
       readCardHashes: record.readCardHashes,
       lastInputAt: record.lastInputAt,
       lastOutputAt: record.lastOutputAt,
+      lastAccessedAt: record.lastAccessedAt,
+      persistent: record.persistent,
       background: record.background,
       backgroundColor: record.backgroundColor
     };
@@ -823,6 +876,27 @@ function parseRgb(value: string): [number, number, number] | undefined {
 
 function rgbToCss(rgb: [number, number, number]): string {
   return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+}
+
+function temporaryConsoleTtlMs(settings: AppSettings): number {
+  const hours = Number(settings.temporaryConsoles.ttlHours);
+  return Number.isFinite(hours) ? Math.max(0, hours) * 60 * 60 * 1000 : 0;
+}
+
+function lastConsoleActivityTime(record: ConsoleRecord): number {
+  return Math.max(
+    parseTime(record.lastAccessedAt),
+    parseTime(record.lastInputAt),
+    parseTime(record.lastOutputAt),
+    parseTime(record.updatedAt),
+    parseTime(record.createdAt)
+  );
+}
+
+function parseTime(value?: string): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function cardsToMatches(cards: ExtractedCard[]): ErrorMatch[] {
