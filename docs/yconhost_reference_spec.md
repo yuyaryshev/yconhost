@@ -237,7 +237,9 @@ Minimal HTTP MCP API:
 - read console output;
 - write console input.
 
-MCP `create_console` and `register_console` create temporary consoles by default. Pass `persistent: true` to keep a console slot. A temporary console is removed automatically after the configured idle TTL when it has no live terminal session and has had no direct access, input, or output during that TTL.
+MCP `create_console` and `register_console` create temporary consoles by default. Pass `persistent: true` to keep a console slot. A temporary console and its process tree are removed automatically after the configured idle TTL without direct access, input, or output, including shells still waiting at a prompt. Listing consoles/projects does not renew TTL. Activity timestamps survive service restarts; expired records are also removed at startup. Existing records and HTTP/UI-created consoles remain persistent by default.
+
+Terminal shutdown releases the native PTY as well as the shell process tree, including after natural process exit. PM2 sends a shutdown message so the server can save console definitions and close sessions. Service startup restores idle slots without starting their processes.
 
 ## 4. Target Architecture With Backend Headless Xterm
 

@@ -45,6 +45,7 @@ export class ConsoleManager {
     for (const definition of this.store?.load() ?? []) {
       this.createManaged(definition, false);
     }
+    this.cleanupTemporaryConsoles();
     this.startTemporaryCleanup();
   }
 
@@ -158,8 +159,8 @@ export class ConsoleManager {
       readCardHashes: request.readCardHashes ?? [],
       errorCount: 0,
       unseenErrorCount: 0,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: request.createdAt ?? now,
+      updatedAt: request.updatedAt ?? now,
       lastInputAt: request.lastInputAt,
       lastOutputAt: request.lastOutputAt,
       lastAccessedAt: request.lastAccessedAt ?? now,
@@ -250,6 +251,7 @@ export class ConsoleManager {
       throw new Error("Console name is required");
     }
     const item = this.requireConsole(id);
+    this.touchAccess(item);
     item.record.name = trimmed;
     item.record.updatedAt = new Date().toISOString();
     this.persist();
@@ -310,9 +312,7 @@ export class ConsoleManager {
       const keep = new Set(orderedIds);
       for (const item of [...this.consoles.values()]) {
         if (item.record.projectPath && path.resolve(item.record.projectPath).toLowerCase() === resolvedProjectPath.toLowerCase() && !keep.has(item.record.id)) {
-          item.session?.kill();
-          if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
-          this.consoles.delete(item.record.id);
+          this.deleteManaged(item);
         }
       }
     }
@@ -488,6 +488,8 @@ export class ConsoleManager {
     this.touchAccess(old);
     const request = this.requestFromRecord(old.record, true);
     old.session?.kill();
+    if (old.cardRefreshTimer) clearTimeout(old.cardRefreshTimer);
+    old.mirror.dispose();
     return this.createManaged(request, true);
   }
 
@@ -496,6 +498,8 @@ export class ConsoleManager {
     this.touchAccess(old);
     if (old.session) return old.record;
     const request = this.requestFromRecord(old.record, true);
+    if (old.cardRefreshTimer) clearTimeout(old.cardRefreshTimer);
+    old.mirror.dispose();
     return this.createManaged(request, true);
   }
 
@@ -528,9 +532,7 @@ export class ConsoleManager {
 
   closeProject(project: string): void {
     for (const item of this.itemsForProject(project)) {
-      item.session?.kill();
-      if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
-      this.consoles.delete(item.record.id);
+      this.deleteManaged(item);
     }
     this.managedProjects.delete(project);
     this.projectStore?.removeManagedProject(project);
@@ -568,13 +570,12 @@ export class ConsoleManager {
   kill(id: string): void {
     const item = this.requireConsole(id);
     this.touchAccess(item);
-    item.session?.kill();
-    if (item.record.project === "Default") {
-      if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
-      this.consoles.delete(id);
+    if (item.record.project === "Default" || item.record.persistent === false) {
+      this.deleteManaged(item);
       this.persist();
       return;
     }
+    item.session?.kill();
     item.session = undefined;
     item.record.pid = undefined;
     item.record.status = "idle";
@@ -636,7 +637,6 @@ export class ConsoleManager {
     const removed: string[] = [];
     for (const item of [...this.consoles.values()]) {
       if (item.record.persistent !== false) continue;
-      if (item.session) continue;
       if (now.getTime() - lastConsoleActivityTime(item.record) < ttlMs) continue;
       this.deleteManaged(item);
       removed.push(item.record.id);
@@ -651,9 +651,17 @@ export class ConsoleManager {
   }
 
   private deleteManaged(item: ManagedConsole): void {
+    this.consoles.delete(item.record.id);
     item.session?.kill();
     if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
-    this.consoles.delete(item.record.id);
+    item.mirror.dispose();
+  }
+
+  dispose(): void {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    this.persist();
+    for (const item of [...this.consoles.values()]) this.deleteManaged(item);
+    this.listeners.clear();
   }
 
   private startTemporaryCleanup(): void {
@@ -681,6 +689,7 @@ export class ConsoleManager {
   private requestFromRecord(record: ConsoleRecord, preserveId = false): ConsoleCreateRequest {
     return {
       id: preserveId ? record.id : undefined,
+      createdAt: record.createdAt,
       name: record.name,
       project: record.project,
       projectPath: record.projectPath,
@@ -888,7 +897,6 @@ function lastConsoleActivityTime(record: ConsoleRecord): number {
     parseTime(record.lastAccessedAt),
     parseTime(record.lastInputAt),
     parseTime(record.lastOutputAt),
-    parseTime(record.updatedAt),
     parseTime(record.createdAt)
   );
 }

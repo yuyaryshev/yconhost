@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/server/api.js";
 import { ConsoleManager } from "../src/server/consoleManager.js";
 import { ConsoleStore } from "../src/server/consoleStore.js";
@@ -251,6 +251,55 @@ describe("HTTP API", () => {
     expect(removed).toEqual([tempSlot.id]);
     expect(() => managedManager.get(tempSlot.id)).toThrow(/not found/);
     expect(managedManager.get(keepSlot.id)).toMatchObject({ id: keepSlot.id, persistent: true });
+  });
+
+  it("expires running temporary shells but preserves recently read or productive sessions", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-16T00:00:00Z"));
+      const stale = manager.create({ persistent: false, cwd: dir });
+      const read = manager.create({ persistent: false, cwd: dir });
+      const productive = manager.create({ persistent: false, cwd: dir });
+      const permanent = manager.create({ persistent: true, cwd: dir });
+      vi.setSystemTime(new Date("2026-10-16T03:59:59Z"));
+      expect(manager.cleanupTemporaryConsoles()).toEqual([]);
+      manager.readOutput(read.id);
+      factory.sessions[2].push("still working\r\n");
+      vi.setSystemTime(new Date("2026-10-16T04:00:00Z"));
+      manager.list();
+      manager.listProjects();
+      expect(manager.cleanupTemporaryConsoles()).toEqual([stale.id]);
+      expect(factory.sessions[0].killed).toBe(true);
+      expect(manager.list().map((item) => item.id)).toEqual([read.id, productive.id, permanent.id]);
+    } finally {
+      manager.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves inactivity across service restart and never respawns saved consoles", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const settings = testSettings(dir);
+    const store = new ConsoleStore(settings);
+    let first: ConsoleManager | undefined;
+    let second: ConsoleManager | undefined;
+    try {
+      vi.setSystemTime(new Date("2026-10-16T00:00:00Z"));
+      first = new ConsoleManager(settings, new LogStore(settings), new FakeTerminalFactory(), store);
+      const temp = first.create({ persistent: false, cwd: dir });
+      const permanent = first.create({ cwd: dir });
+      first.dispose();
+      vi.setSystemTime(new Date("2026-10-16T05:00:00Z"));
+      const restartedFactory = new FakeTerminalFactory();
+      second = new ConsoleManager(settings, new LogStore(settings), restartedFactory, store);
+      expect(second.list().map((item) => item.id)).toEqual([permanent.id]);
+      expect(second.list()[0].createdAt).toBe(permanent.createdAt);
+      expect(store.load().some((item) => item.id === temp.id)).toBe(false);
+      expect(restartedFactory.sessions).toHaveLength(0);
+    } finally {
+      second?.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("imports Codex contexts as idle colored slots and starts only on explicit start", async () => {

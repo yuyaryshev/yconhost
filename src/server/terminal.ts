@@ -27,15 +27,31 @@ export class PtyTerminalFactory implements TerminalFactory {
       useConpty: process.platform === "win32"
     });
 
+    let released = false;
+    let exited = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      // node-pty 1.1.0 defers kill until first output, even for silent/exited shells.
+      if (process.platform === "win32") {
+        (term as typeof term & { _isReady: boolean })._isReady = true;
+      }
+      term.kill();
+    };
+    term.onExit(() => {
+      exited = true;
+      release();
+    });
+
     return {
       pid: term.pid,
       write: (data) => term.write(data),
       resize: (cols, rows) => term.resize(cols, rows),
       kill: (signal) => {
-        if (term.pid) {
-          killProcessTree(term.pid, signal);
+        if (term.pid && !exited && !released) {
+          killProcessTree(term.pid, signal, release);
         } else {
-          term.kill();
+          release();
         }
       },
       onData: (listener) => term.onData(listener),
@@ -44,17 +60,18 @@ export class PtyTerminalFactory implements TerminalFactory {
   }
 }
 
-function killProcessTree(pid: number, signal?: string): void {
+function killProcessTree(pid: number, signal: string | undefined, onDone: () => void): void {
   if (process.platform === "win32") {
     const child = spawnChild("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
       stdio: "ignore",
       windowsHide: true
     });
-    child.on("error", () => undefined);
+    child.once("error", onDone);
+    child.once("exit", onDone);
     return;
   }
 
-  treeKill(pid, signal ?? "SIGTERM", () => undefined);
+  treeKill(pid, signal ?? "SIGTERM", onDone);
 }
 
 export function buildTerminalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

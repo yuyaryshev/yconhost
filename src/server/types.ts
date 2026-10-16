@@ -1,6 +1,8 @@
 export type ConsoleStatus = "idle" | "starting" | "running" | "ready" | "exited";
 
 export interface ConsoleCreateRequest {
+  createdAt?: string;
+  updatedAt?: string;
   id?: string;
   name?: string;
   project?: string;
@@ -27,6 +29,8 @@ export interface ConsoleRegisterRequest extends ConsoleCreateRequest {
 }
 
 export interface ConsoleDefinition {
+  createdAt?: string;
+  updatedAt?: string;
   id: string;
   name: string;
   project: string;

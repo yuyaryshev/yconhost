@@ -20,6 +20,8 @@ export class ConsoleStore {
   save(records: ConsoleRecord[]): void {
     const definitions: ConsoleDefinition[] = records.map((record) => ({
       id: record.id,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
       name: record.name,
       project: record.project,
       projectPath: record.projectPath,
