@@ -289,6 +289,10 @@ describe("HTTP API", () => {
       const temp = first.create({ persistent: false, cwd: dir });
       const permanent = first.create({ cwd: dir });
       first.dispose();
+      const legacy = store.load();
+      delete legacy[0].createdAt;
+      delete legacy[0].updatedAt;
+      fs.writeFileSync(path.join(dir, "consoles.json"), JSON.stringify(legacy));
       vi.setSystemTime(new Date("2026-10-16T05:00:00Z"));
       const restartedFactory = new FakeTerminalFactory();
       second = new ConsoleManager(settings, new LogStore(settings), restartedFactory, store);

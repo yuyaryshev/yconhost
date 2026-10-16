@@ -893,12 +893,12 @@ function temporaryConsoleTtlMs(settings: AppSettings): number {
 }
 
 function lastConsoleActivityTime(record: ConsoleRecord): number {
+  // Legacy restores regenerated createdAt; real activity takes precedence over it.
   return Math.max(
     parseTime(record.lastAccessedAt),
     parseTime(record.lastInputAt),
-    parseTime(record.lastOutputAt),
-    parseTime(record.createdAt)
-  );
+    parseTime(record.lastOutputAt)
+  ) || parseTime(record.createdAt);
 }
 
 function parseTime(value?: string): number {

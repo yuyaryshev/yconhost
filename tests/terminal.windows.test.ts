@@ -4,7 +4,7 @@ import { PtyTerminalFactory, type TerminalSession } from "../src/server/terminal
 
 function hostCount(): number {
   return Number(execFileSync("powershell.exe", ["-NoProfile", "-Command",
-    `@(Get-CimInstance Win32_Process -Filter \"Name='conhost.exe' AND ParentProcessId=${process.pid}\").Count`
+    `@(Get-CimInstance Win32_Process -Filter \"(Name='conhost.exe' OR Name='OpenConsole.exe') AND ParentProcessId=${process.pid}\").Count`
   ], { encoding: "utf8", windowsHide: true }));
 }
 
@@ -19,6 +19,8 @@ async function eventually(check: () => boolean, timeoutMs = 10_000): Promise<voi
 it.runIf(process.platform === "win32")("releases ConPTY hosts after silent exit, forced close and interactive input", async () => {
   const factory = new PtyTerminalFactory();
   const baseline = hostCount();
+  const messagePorts = () => process.getActiveResourcesInfo().filter((name) => name === "MessagePort").length;
+  const baselinePorts = messagePorts();
   const sessions: TerminalSession[] = [];
   const spawn = (args: string[]) => {
     const session = factory.spawn("cmd.exe", args, { cwd: process.cwd(), env: process.env, cols: 80, rows: 24 });
@@ -45,6 +47,18 @@ it.runIf(process.platform === "win32")("releases ConPTY hosts after silent exit,
     await eventually(() => output.includes("YCONHOST_INPUT_OK"));
     interactive.kill();
     await eventually(() => hostCount() === baseline);
+    const child = spawn(["/d", "/q", "/k"]);
+    let childOutput = "";
+    child.onData((chunk) => { childOutput += chunk; });
+    child.write(`node -e "console.log('YCONHOST_CHILD:' + process.pid);setInterval(()=>{},1000)"\r`);
+    await eventually(() => /YCONHOST_CHILD:\d+/.test(childOutput));
+    const childPid = Number(childOutput.match(/YCONHOST_CHILD:(\d+)/)?.[1]);
+    child.kill();
+    await eventually(() => {
+      try { process.kill(childPid, 0); return false; } catch { return true; }
+    });
+    await eventually(() => hostCount() === baseline);
+    await eventually(() => messagePorts() <= baselinePorts);
   } finally {
     for (const session of sessions) session.kill();
   }

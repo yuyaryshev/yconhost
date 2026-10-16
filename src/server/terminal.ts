@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import { spawn as spawnChild } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { createRequire } from "node:module";
 import pty from "node-pty";
 import treeKill from "tree-kill";
 
@@ -18,17 +21,20 @@ export interface TerminalFactory {
 
 export class PtyTerminalFactory implements TerminalFactory {
   spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; cols: number; rows: number }): TerminalSession {
+    prepareConptyRuntime();
     const term = pty.spawn(shell, args, {
       cwd: options.cwd,
       env: buildTerminalEnv(options.env),
       cols: options.cols,
       rows: options.rows,
       name: "xterm-256color",
-      useConpty: process.platform === "win32"
+      useConpty: process.platform === "win32",
+      useConptyDll: process.platform === "win32"
     });
 
     let released = false;
     let exited = false;
+    let closing = false;
     const release = () => {
       if (released) return;
       released = true;
@@ -41,6 +47,10 @@ export class PtyTerminalFactory implements TerminalFactory {
     term.onExit(() => {
       exited = true;
       release();
+      if (process.platform === "win32") {
+        // node-pty's DLL path otherwise waits for another output chunk to stop its worker.
+        (term as typeof term & { _agent: { _conoutSocketWorker: { dispose(): void } } })._agent._conoutSocketWorker.dispose();
+      }
     });
 
     return {
@@ -48,6 +58,8 @@ export class PtyTerminalFactory implements TerminalFactory {
       write: (data) => term.write(data),
       resize: (cols, rows) => term.resize(cols, rows),
       kill: (signal) => {
+        if (closing || released) return;
+        closing = true;
         if (term.pid && !exited && !released) {
           killProcessTree(term.pid, signal, release);
         } else {
@@ -58,6 +70,22 @@ export class PtyTerminalFactory implements TerminalFactory {
       onExit: (listener) => term.onExit((event) => listener(event.exitCode))
     };
   }
+}
+
+let conptyPrepared = false;
+function prepareConptyRuntime(): void {
+  if (process.platform !== "win32" || conptyPrepared) return;
+  const require = createRequire(import.meta.url);
+  const root = path.dirname(require.resolve("node-pty/package.json"));
+  const bundled = path.join(root, "prebuilds", `win32-${process.arch}`, "conpty");
+  // Locally rebuilt node-pty binaries need the bundled runtime beside them too.
+  for (const build of ["Release", "Debug"]) {
+    const dir = path.join(root, "build", build);
+    if (fs.existsSync(path.join(dir, "conpty.node")) && !fs.existsSync(path.join(dir, "conpty", "conpty.dll"))) {
+      fs.cpSync(bundled, path.join(dir, "conpty"), { recursive: true });
+    }
+  }
+  conptyPrepared = true;
 }
 
 function killProcessTree(pid: number, signal: string | undefined, onDone: () => void): void {
