@@ -7,3 +7,5 @@ A successful response turns the indicator green and resets the silence deadline.
 Previously, requests were aborted after 250 ms, less than the 300 ms probe interval, and every failure immediately turned the indicator red. This caused flickering during short delays.
 
 Real-server verification also exposed synchronous PM2 polling in console-list requests, which blocked the server event loop long enough to miss probes even with the corrected deadline. PM2 snapshots now refresh asynchronously, at most once per two seconds, while API calls use the latest cached snapshot. Failed refreshes retain the last good snapshot. Version-warning text before PM2's JSON output is tolerated.
+
+Verification: production build and the PM2/API tests passed. Browser checks with 450 ms response delays and occasional 850 ms timeouts showed no false offline transitions; full loss and recovery were detected. Before the PM2 change, the live page switched red twice in four seconds. After deployment, eight seconds of live observation showed zero transitions and a continuously green indicator. The service was restarted only after confirming there were no running managed consoles.
