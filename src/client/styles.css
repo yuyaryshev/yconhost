@@ -699,8 +699,15 @@ h2 {
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 6px 9px;
+}
+
+.dialog input,
+.dialog select,
+.project-console-search,
+.project-show-all {
   color: var(--text);
   background: var(--surface-bg);
+  border-color: var(--border-strong);
 }
 
 .dialog .checkbox-label {
