@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { Button, Dialog, DialogDismiss, DialogHeading, useDialogStore } from "@ariakit/react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { selectProjectConsoles } from "./projectConsoles.js";
 
 type ConsoleRecord = {
   id: string;
@@ -19,6 +20,9 @@ type ConsoleRecord = {
   errorCount: number;
   unseenErrorCount: number;
   updatedAt: string;
+  lastStartedAt?: string;
+  lastInputAt?: string;
+  lastOutputAt?: string;
   background?: string;
   backgroundColor?: { dark: string; light: string };
   pid?: number;
@@ -99,6 +103,7 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>();
   const [serverAlive, setServerAlive] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set(["pm2"]));
+  const knownProjects = useRef(new Set<string>());
   const advancedDialog = useDialogStore();
   const folderDialog = useDialogStore();
   const preferencesDialog = useDialogStore();
@@ -139,6 +144,12 @@ function App() {
     const response = await fetch("/api/consoles");
     const data = (await response.json()) as { consoles: ConsoleRecord[] };
     setConsoles(data.consoles);
+    const names = new Set(["Default", ...data.consoles.map((item) => item.project)]);
+    const newNames = [...names].filter((name) => !knownProjects.current.has(name));
+    if (names.size > 3 && newNames.length > 0) {
+      setCollapsedProjects((current) => new Set([...current, ...newNames]));
+    }
+    knownProjects.current = names;
     setSelectedId((current) => (current && data.consoles.some((item) => item.id === current) ? current : data.consoles[0]?.id));
   }
 
@@ -466,12 +477,7 @@ function App() {
                 onAddConsole={() => openAddMywins(group.project)}
               />
               {!collapsedProjects.has(group.project) ? (
-                <>
-                  {group.consoles.length === 0 ? <div className="empty-project">No consoles</div> : null}
-                  {group.consoles.map((item) => (
-                    <ConsoleRow key={item.id} item={item} active={item.id === selectedId} theme={theme} onSelect={() => setSelectedId(item.id)} onClose={closeConsole} />
-                  ))}
-                </>
+                <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} />
               ) : null}
             </section>
           ))}
@@ -782,6 +788,27 @@ function ProjectHeader({
   );
 }
 
+function ProjectConsoleList({ consoles, selectedId, theme, onSelect, onClose }: {
+  consoles: ConsoleRecord[];
+  selectedId?: string;
+  theme: AppTheme;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const isLarge = consoles.length > 10;
+  const visible = selectProjectConsoles(consoles, query, showAll);
+  return (
+    <div className="project-consoles" data-large={isLarge}>
+      {isLarge ? <input className="project-console-search" type="search" aria-label="Поиск консолей" placeholder="Поиск консолей" value={query} onChange={(event) => setQuery(event.target.value)} /> : null}
+      {visible.length === 0 ? <div className="empty-project">{query ? "Ничего не найдено" : "Нет недавних запусков"}</div> : null}
+      {visible.map((item) => <ConsoleRow key={item.id} item={item} active={item.id === selectedId} theme={theme} onSelect={() => onSelect(item.id)} onClose={onClose} />)}
+      {isLarge && !showAll ? <button className="project-show-all" onClick={() => setShowAll(true)}>Показать все</button> : null}
+    </div>
+  );
+}
+
 function RecentProjectRow({ project, onSelect, onClose }: { project: RecentProject; onSelect: () => void; onClose: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
 
@@ -981,6 +1008,7 @@ function TerminalPane({
   }
 
   useEffect(() => {
+    if (!isReadonly && !canRestart) return;
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: true,
@@ -1063,8 +1091,9 @@ function TerminalPane({
       socketRef.current?.close();
       hostRef.current?.removeEventListener("wheel", wheelToPage);
       terminal.dispose();
+      terminalRef.current = null;
     };
-  }, [consoleRecord.id, theme, isReadonly, terminalBackground]);
+  }, [consoleRecord.id, theme, isReadonly, terminalBackground, canRestart]);
 
   useEffect(() => {
     if (!isReadonly || !terminalRef.current) return;
@@ -1166,7 +1195,7 @@ function TerminalPane({
       <div className="console-scroll" ref={scrollRef} onScroll={updateScrollState}>
         {!cardsCollapsed ? <CardsPanel cards={filteredCards} /> : null}
         <div className="terminal-stage">
-          <div ref={hostRef} className="terminal-host" />
+          <div ref={hostRef} className="terminal-host" hidden={!isReadonly && !canRestart} />
           {!isReadonly && !canRestart ? <DisabledConsoleOverlay consoleRecord={consoleRecord} /> : null}
         </div>
         {debugMode ? <ErrorDebugPanel matches={cards.map((card) => ({ id: card.id, createdAt: card.createdAt, line: card.title, reason: `${card.kind} ${card.category}` }))} /> : null}

@@ -8,7 +8,7 @@ import { ConsoleManager } from "../src/server/consoleManager.js";
 import { ConsoleStore } from "../src/server/consoleStore.js";
 import { LogStore } from "../src/server/logStore.js";
 import { ProjectStore } from "../src/server/projectStore.js";
-import { buildTerminalEnv, FakeTerminalFactory } from "../src/server/terminal.js";
+import { buildTerminalEnv, mergeWindowsEnvironment, FakeTerminalFactory } from "../src/server/terminal.js";
 import type { AppSettings } from "../src/server/types.js";
 
 function testSettings(dataDir: string): AppSettings {
@@ -76,6 +76,16 @@ describe("HTTP API", () => {
     expect(env.FORCE_COLOR).toBe("1");
     expect(env.CLICOLOR_FORCE).toBe("1");
     expect(env.NO_COLOR).toBeUndefined();
+  });
+
+  it("refreshes Windows environment case-insensitively while retaining inherited tools", () => {
+    const env = mergeWindowsEnvironment({ Path: "C:\\old-tools;C:\\Windows", Profile: "stale" }, {
+      machine: { PATH: "%SystemRoot%;D:\\ycodex\\bin", SystemRoot: "C:\\Windows" },
+      user: { Path: "D:\\user-tools;D:\\ycodex\\bin", PROFILE: "current" }
+    });
+    expect(env.PATH?.split(";")).toEqual(["C:\\Windows", "D:\\ycodex\\bin", "D:\\user-tools", "C:\\old-tools", "C:\\Windows"]);
+    expect(env.PROFILE).toBe("current");
+    expect(env.Path).toBeUndefined();
   });
 
   it("creates, lists, reads, writes and deletes a console", async () => {
@@ -324,6 +334,8 @@ describe("HTTP API", () => {
     const managedManager = new ConsoleManager(settings, new LogStore(settings), managedFactory, undefined, new ProjectStore(settings));
     const managedApp = createApp(managedManager, { pm2: false });
 
+    expect(managedManager.list("codexes")).toHaveLength(2);
+    expect(managedFactory.sessions).toHaveLength(0);
     const imported = await request(managedApp).post("/api/codex-contexts/import").send({}).expect(200);
     expect(imported.body).toMatchObject({ project: "codexes", imported: 2 });
     expect(imported.body.consoles.map((item: { name: string }) => item.name)).toEqual(["stable", "Dynamic context"]);
@@ -339,6 +351,8 @@ describe("HTTP API", () => {
     const started = await request(managedApp).post(`/api/consoles/${imported.body.consoles[0].id}/start`).send({}).expect(200);
     expect(started.body).toMatchObject({ name: "stable", status: "running" });
     expect(managedFactory.sessions).toHaveLength(1);
+    const launchedAt = started.body.lastStartedAt;
+    expect(launchedAt).toBeTruthy();
 
     const tools = await request(managedApp).post("/mcp").send({ method: "tools/list" }).expect(200);
     expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toContain("import_codex_contexts");
@@ -348,6 +362,8 @@ describe("HTTP API", () => {
       .send({ method: "tools/call", params: { name: "import_codex_contexts", arguments: { project: "codexes" } } })
       .expect(200);
     expect(JSON.parse(mcpImport.body.content[0].text)).toMatchObject({ project: "codexes", imported: 2 });
+    expect(managedManager.list("codexes")[0].lastStartedAt).toBe(launchedAt);
+    expect(managedFactory.sessions).toHaveLength(1);
   });
 
   it("persists renamed console definitions across manager restart by recreating them", async () => {

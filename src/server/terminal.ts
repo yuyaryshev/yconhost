@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { spawn as spawnChild } from "node:child_process";
+import { execFileSync, spawn as spawnChild } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -103,13 +103,40 @@ function killProcessTree(pid: number, signal: string | undefined, onDone: () => 
 }
 
 export function buildTerminalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...baseEnv };
+  const env: NodeJS.ProcessEnv = process.platform === "win32"
+    ? mergeWindowsEnvironment(baseEnv, readWindowsEnvironment())
+    : { ...baseEnv };
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";
   env.FORCE_COLOR = env.FORCE_COLOR ?? "1";
   env.CLICOLOR = env.CLICOLOR ?? "1";
   env.CLICOLOR_FORCE = env.CLICOLOR_FORCE ?? "1";
   delete env.NO_COLOR;
+  return env;
+}
+
+type WindowsEnvironment = { machine: Record<string, string>; user: Record<string, string> };
+let windowsEnvironment: { value: WindowsEnvironment; readAt: number } | undefined;
+function readWindowsEnvironment(): WindowsEnvironment {
+  if (windowsEnvironment && Date.now() - windowsEnvironment.readAt < 10_000) return windowsEnvironment.value;
+  const value = JSON.parse(execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+    "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); @{machine=[Environment]::GetEnvironmentVariables('Machine');user=[Environment]::GetEnvironmentVariables('User')} | ConvertTo-Json -Compress"
+  ], { encoding: "utf8", windowsHide: true, timeout: 10_000 })) as WindowsEnvironment;
+  windowsEnvironment = { value, readAt: Date.now() };
+  return value;
+}
+
+export function mergeWindowsEnvironment(base: NodeJS.ProcessEnv, current: WindowsEnvironment): NodeJS.ProcessEnv {
+  const canonical = (value: NodeJS.ProcessEnv) => Object.fromEntries(Object.entries(value).map(([key, item]) => [key.toUpperCase(), item]));
+  const machine = canonical(current.machine);
+  const user = canonical(current.user);
+  const inherited = canonical(base);
+  const env = { ...inherited, ...machine, ...user };
+  const paths = [machine.PATH, user.PATH, inherited.PATH].filter(Boolean).join(";").split(";").filter(Boolean);
+  env.PATH = [...new Map(paths.map((entry) => [entry.toLowerCase(), entry])).values()].join(";");
+  for (let pass = 0; pass < 3; pass++) {
+    for (const key of Object.keys(env)) env[key] = env[key]?.replace(/%([^%]+)%/g, (match, name: string) => env[name.toUpperCase()] ?? match);
+  }
   return env;
 }
 

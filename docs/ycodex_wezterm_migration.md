@@ -227,4 +227,12 @@ For manual HTTP checks, start a temporary instance on a different port and data 
 
 1. When a context disappears from the Markdown file, should import remove it from `codexes`, leave it unchanged, or mark it stale?
 
-2. Should live yconsole automatically sync `codexes` at service startup, or should sync be manual only via UI/MCP? Current implementation is manual only.
+2. Resolved 2026-10-19: sync Codex contexts automatically at every service startup. Import remains idempotent and creates idle slots only; it never starts Codex processes.
+
+## Launch and Navigation Update, 2026-10-19
+
+- New Windows consoles refresh machine/user environment variables from the registry (cached for ten seconds), merging the current PATH with inherited tool paths. This avoids depending on the age of PM2's environment. WezTerm explicitly adds ycodex/bin in its launcher, which explained why the same command previously failed in yconsole.
+- Stopped consoles hide and dispose the browser terminal; the displayed command accepts mouse selection and copying.
+- Projects with more than ten consoles are automatically marked isLarge. Their UI shows search plus the nine most recently started slots. Search covers all names, commands and working directories, including never-started slots. Show all lasts until the project is collapsed. Console lastStartedAt is persisted and is not changed by import or viewing.
+- When more than three projects exist, projects initially appear collapsed.
+- Legacy temp_* slots are removed from persisted console registrations during this deployment, across all projects. This cleanup does not change project mywins.json files.

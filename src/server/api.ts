@@ -28,6 +28,7 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
         ...manager.listProjects(),
         ...(pm2 ? [{
           name: "pm2",
+          isLarge: pm2Consoles.length > 10,
           consoleCount: pm2Consoles.length,
           runningCount: pm2Consoles.filter((row) => row.status === "running").length,
           readyCount: 0,
@@ -225,6 +226,7 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
           if (name === "list_projects") {
             const projects = [...manager.listProjects(), ...(pm2 ? [{
               name: "pm2",
+              isLarge: pm2.list().length > 10,
               consoleCount: pm2.list().length,
               runningCount: pm2.list().filter((row) => row.status === "running").length,
               readyCount: 0,

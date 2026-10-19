@@ -46,6 +46,11 @@ export class ConsoleManager {
       this.createManaged(definition, false);
     }
     this.cleanupTemporaryConsoles();
+    try {
+      this.importCodexContexts();
+    } catch (error) {
+      console.error("[yconhost] Codex startup import failed:", error instanceof Error ? error.message : error);
+    }
     this.startTemporaryCleanup();
   }
 
@@ -68,6 +73,7 @@ export class ConsoleManager {
         name,
         projectPath: consoles.find((row) => row.projectPath)?.projectPath,
         consoleCount: consoles.length,
+        isLarge: consoles.length > 10,
         runningCount: consoles.filter((row) => row.status === "running").length,
         readyCount: consoles.filter((row) => row.status === "ready").length,
         unseenErrorCount: consoles.reduce((sum, row) => sum + row.unseenErrorCount, 0)
@@ -162,6 +168,7 @@ export class ConsoleManager {
       createdAt: request.createdAt ?? now,
       updatedAt: request.updatedAt ?? now,
       lastInputAt: request.lastInputAt,
+      lastStartedAt: request.lastStartedAt,
       lastOutputAt: request.lastOutputAt,
       lastAccessedAt: request.lastAccessedAt ?? now,
       persistent: request.persistent ?? true,
@@ -194,6 +201,7 @@ export class ConsoleManager {
         managed.session = session;
         record.pid = session.pid;
         record.status = "running";
+        record.lastStartedAt = new Date().toISOString();
         this.persist();
 
         session.onData((chunk) => this.capture(managed, chunk));
@@ -689,6 +697,7 @@ export class ConsoleManager {
   private requestFromRecord(record: ConsoleRecord, preserveId = false): ConsoleCreateRequest {
     return {
       id: preserveId ? record.id : undefined,
+      lastStartedAt: record.lastStartedAt,
       createdAt: record.createdAt,
       name: record.name,
       project: record.project,

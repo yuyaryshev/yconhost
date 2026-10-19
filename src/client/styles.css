@@ -505,14 +505,31 @@ h2 {
 }
 
 .disabled-console-overlay {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  min-height: max(620px, calc((100vh - 74px) * 0.66));
   z-index: 2;
   display: flex;
   align-items: flex-start;
   padding: 18px;
   background: color-mix(in srgb, var(--terminal-bg) 88%, transparent);
-  pointer-events: none;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.terminal-host[hidden] {
+  display: none;
+}
+
+.project-console-search {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 6px 8px;
+  min-width: 0;
+}
+
+.project-show-all {
+  width: calc(100% - 16px);
+  margin: 6px 8px 10px;
 }
 
 .disabled-console-panel {

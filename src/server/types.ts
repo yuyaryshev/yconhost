@@ -1,6 +1,7 @@
 export type ConsoleStatus = "idle" | "starting" | "running" | "ready" | "exited";
 
 export interface ConsoleCreateRequest {
+  lastStartedAt?: string;
   createdAt?: string;
   updatedAt?: string;
   id?: string;
@@ -29,6 +30,7 @@ export interface ConsoleRegisterRequest extends ConsoleCreateRequest {
 }
 
 export interface ConsoleDefinition {
+  lastStartedAt?: string;
   createdAt?: string;
   updatedAt?: string;
   id: string;
@@ -53,6 +55,7 @@ export interface ConsoleDefinition {
 }
 
 export interface ConsoleRecord {
+  lastStartedAt?: string;
   id: string;
   name: string;
   project: string;
@@ -94,6 +97,7 @@ export interface ConsoleSessionState extends ConsoleRecord {
 }
 
 export interface ProjectSummary {
+  isLarge: boolean;
   name: string;
   projectPath?: string;
   consoleCount: number;
