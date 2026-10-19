@@ -122,23 +122,37 @@ function App() {
 
   useEffect(() => {
     let disposed = false;
+    const intervalMs = 300;
+    const timeoutMs = intervalMs * 2.2;
+    let offlineTimer: number | undefined;
+    const pending = new Set<AbortController>();
     async function checkHealth() {
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 250);
+      pending.add(controller);
+      const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch("/api/health", { cache: "no-store", signal: controller.signal });
-        if (!disposed) setServerAlive(response.ok);
+        if (!disposed && response.ok) {
+          setServerAlive(true);
+          window.clearTimeout(offlineTimer);
+          offlineTimer = window.setTimeout(() => {
+            if (!disposed) setServerAlive(false);
+          }, timeoutMs);
+        }
       } catch {
-        if (!disposed) setServerAlive(false);
+        // Only the silence deadline can mark the server offline, not an older failed ping.
       } finally {
         window.clearTimeout(timeout);
+        pending.delete(controller);
       }
     }
     void checkHealth();
-    const timer = window.setInterval(checkHealth, 300);
+    const timer = window.setInterval(checkHealth, intervalMs);
     return () => {
       disposed = true;
       window.clearInterval(timer);
+      window.clearTimeout(offlineTimer);
+      for (const controller of pending) controller.abort();
     };
   }, []);
 
