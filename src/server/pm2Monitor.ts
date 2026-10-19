@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { ConsoleRecord, ConsoleSessionState, ConsoleSnapshot } from "./types.js";
@@ -19,6 +19,9 @@ type Pm2Process = {
 };
 
 export class Pm2Monitor {
+  private processes: Pm2Process[] = [];
+  private refreshing = false;
+  private lastRefreshAt = -Infinity;
   list(): ConsoleRecord[] {
     return this.readProcesses().map((processInfo) => this.toRecord(processInfo));
   }
@@ -56,15 +59,25 @@ export class Pm2Monitor {
   }
 
   private readProcesses(): Pm2Process[] {
-    try {
-      const output =
-        process.platform === "win32"
-          ? execFileSync("cmd.exe", ["/d", "/s", "/c", "pm2 jlist"], { encoding: "utf8", windowsHide: true, timeout: 5000 })
-          : execFileSync("pm2", ["jlist"], { encoding: "utf8", timeout: 5000 });
-      return JSON.parse(output) as Pm2Process[];
-    } catch {
-      return [];
+    if (!this.refreshing && Date.now() - this.lastRefreshAt >= 2000) {
+      this.refreshing = true;
+      const command = process.platform === "win32" ? "cmd.exe" : "pm2";
+      const args = process.platform === "win32" ? ["/d", "/s", "/c", "pm2 jlist"] : ["jlist"];
+      execFile(command, args, { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 10 * 1024 * 1024 }, (error, output) => {
+        this.refreshing = false;
+        this.lastRefreshAt = Date.now();
+        if (error) return;
+        try {
+          // Some PM2 versions print a version warning before the JSON array.
+          const start = output.search(/^\s*\[\s*(?:\{|\])/m);
+          const parsed: unknown = JSON.parse(output.slice(start));
+          if (Array.isArray(parsed)) this.processes = parsed;
+        } catch {
+          // Retain the last successful snapshot if PM2 is temporarily unavailable.
+        }
+      });
     }
+    return this.processes;
   }
 
   private toRecord(processInfo: Pm2Process): ConsoleRecord {
