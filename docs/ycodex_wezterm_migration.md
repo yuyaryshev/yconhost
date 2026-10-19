@@ -235,7 +235,7 @@ For manual HTTP checks, start a temporary instance on a different port and data 
 - Stopped consoles hide and dispose the browser terminal; the displayed command accepts mouse selection and copying.
 - Projects with more than ten consoles are automatically marked isLarge. Their UI shows search plus the nine most recently started slots. Search covers all names, commands and working directories, including never-started slots. Show all lasts until the project is collapsed. Console lastStartedAt is persisted and is not changed by import or viewing.
 - When more than three projects exist, projects initially appear collapsed.
-- Project search and Show all share background, text and border theme colors with the Open folder dialog input in both dark and light themes.
+- Project search and Show all share background, text and border theme colors with the Open folder dialog input in both dark and light themes. Browser computed-style checks confirmed all three colors match in each theme; production build passed.
 - Legacy temp_* slots are removed from persisted console registrations during this deployment, across all projects. This cleanup does not change project mywins.json files.
 - Codex launch verification exposed browser terminal device/color/focus reports being injected into the Windows command input. These generated reports are now suppressed for Windows native shells, while typed text, paste and navigation keys continue to pass through. Browser terminal dimensions are reapplied when lastStartedAt changes so Restart retains a correctly framed TUI.
 
