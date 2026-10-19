@@ -236,3 +236,13 @@ For manual HTTP checks, start a temporary instance on a different port and data 
 - Projects with more than ten consoles are automatically marked isLarge. Their UI shows search plus the nine most recently started slots. Search covers all names, commands and working directories, including never-started slots. Show all lasts until the project is collapsed. Console lastStartedAt is persisted and is not changed by import or viewing.
 - When more than three projects exist, projects initially appear collapsed.
 - Legacy temp_* slots are removed from persisted console registrations during this deployment, across all projects. This cleanup does not change project mywins.json files.
+- Codex launch verification exposed browser terminal device/color/focus reports being injected into the Windows command input. These generated reports are now suppressed for Windows native shells, while typed text, paste and navigation keys continue to pass through. Browser terminal dimensions are reapplied when lastStartedAt changes so Restart retains a correctly framed TUI.
+
+### Verification Results
+
+- Removed 194 legacy temp_* registrations: 186 from odbp_bundle and eight from odbp. The pre-cleanup JSON backup remains under the ignored data directory.
+- Service startup automatically imported 71 Codex slots without launching any processes. Repeated import did not duplicate slots or start them.
+- A console spawned by the PM2 service resolved ycodex.cmd and reported codex-cli 0.159.0+ycodex.c3403eed. An actual saved odbp_requirements session was launched and resumed through the browser.
+- Browser checks covered initial project collapse, a 13-slot fixture showing nine recent launches, search matching an unstarted slot, Show all, and reset on collapse. The fixture project was removed after verification.
+- Verified stopped-command copying through the system clipboard with no xterm instance under the overlay. Captured desktop/mobile screenshots under output/playwright; browser console reported no errors.
+- Build and typecheck passed. Backend, selection and Windows PTY regressions passed; terminal-input tests cover report suppression and ordinary keyboard/paste preservation.

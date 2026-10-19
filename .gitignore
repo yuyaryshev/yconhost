@@ -5,3 +5,5 @@ coverage/
 .vite/
 *.log
 .idea/
+/.playwright-cli/
+/output/playwright/

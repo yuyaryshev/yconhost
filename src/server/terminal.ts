@@ -137,6 +137,7 @@ export function mergeWindowsEnvironment(base: NodeJS.ProcessEnv, current: Window
   for (let pass = 0; pass < 3; pass++) {
     for (const key of Object.keys(env)) env[key] = env[key]?.replace(/%([^%]+)%/g, (match, name: string) => env[name.toUpperCase()] ?? match);
   }
+  env.PATH = [...new Map(env.PATH.split(";").map((entry) => [entry.toLowerCase(), entry])).values()].join(";");
   return env;
 }
 

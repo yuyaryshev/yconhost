@@ -6,6 +6,7 @@ import { Button, Dialog, DialogDismiss, DialogHeading, useDialogStore } from "@a
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { selectProjectConsoles } from "./projectConsoles.js";
+import { isWindowsTerminalReply } from "./terminalInput.js";
 
 type ConsoleRecord = {
   id: string;
@@ -14,6 +15,7 @@ type ConsoleRecord = {
   projectPath?: string;
   cwd: string;
   command: string;
+  shell: string;
   noRun?: boolean;
   autoStartOnOpen?: boolean;
   status: "idle" | "starting" | "running" | "ready" | "exited";
@@ -804,7 +806,7 @@ function ProjectConsoleList({ consoles, selectedId, theme, onSelect, onClose }: 
       {isLarge ? <input className="project-console-search" type="search" aria-label="Поиск консолей" placeholder="Поиск консолей" value={query} onChange={(event) => setQuery(event.target.value)} /> : null}
       {visible.length === 0 ? <div className="empty-project">{query ? "Ничего не найдено" : "Нет недавних запусков"}</div> : null}
       {visible.map((item) => <ConsoleRow key={item.id} item={item} active={item.id === selectedId} theme={theme} onSelect={() => onSelect(item.id)} onClose={onClose} />)}
-      {isLarge && !showAll ? <button className="project-show-all" onClick={() => setShowAll(true)}>Показать все</button> : null}
+      {isLarge && !showAll ? <button className="project-show-all" onClick={() => { setQuery(""); setShowAll(true); }}>Показать все</button> : null}
     </div>
   );
 }
@@ -1040,7 +1042,7 @@ function TerminalPane({
       .then((data: ConsoleSnapshot) => setCards(data.cards ?? []));
 
     const sendInput = (data: string) => {
-      if (isReadonly) return;
+      if (isReadonly || isWindowsTerminalReply(consoleRecord.shell, data)) return;
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify({ type: "input", consoleId: consoleRecord.id, data }));
       } else {
@@ -1093,7 +1095,7 @@ function TerminalPane({
       terminal.dispose();
       terminalRef.current = null;
     };
-  }, [consoleRecord.id, theme, isReadonly, terminalBackground, canRestart]);
+  }, [consoleRecord.id, consoleRecord.lastStartedAt, theme, isReadonly, terminalBackground, canRestart]);
 
   useEffect(() => {
     if (!isReadonly || !terminalRef.current) return;

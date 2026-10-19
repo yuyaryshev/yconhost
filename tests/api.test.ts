@@ -83,7 +83,7 @@ describe("HTTP API", () => {
       machine: { PATH: "%SystemRoot%;D:\\ycodex\\bin", SystemRoot: "C:\\Windows" },
       user: { Path: "D:\\user-tools;D:\\ycodex\\bin", PROFILE: "current" }
     });
-    expect(env.PATH?.split(";")).toEqual(["C:\\Windows", "D:\\ycodex\\bin", "D:\\user-tools", "C:\\old-tools", "C:\\Windows"]);
+    expect(env.PATH?.split(";")).toEqual(["C:\\Windows", "D:\\ycodex\\bin", "D:\\user-tools", "C:\\old-tools"]);
     expect(env.PROFILE).toBe("current");
     expect(env.Path).toBeUndefined();
   });
@@ -339,7 +339,7 @@ describe("HTTP API", () => {
     const imported = await request(managedApp).post("/api/codex-contexts/import").send({}).expect(200);
     expect(imported.body).toMatchObject({ project: "codexes", imported: 2 });
     expect(imported.body.consoles.map((item: { name: string }) => item.name)).toEqual(["stable", "Dynamic context"]);
-    expect(imported.body.consoles[0]).toMatchObject({ status: "idle", noRun: true, background: "#000032" });
+    expect(imported.body.consoles[0]).toMatchObject({ status: "idle", noRun: true, persistent: true, background: "#000032" });
     expect(imported.body.consoles[0].autoStartOnOpen).toBeUndefined();
     expect(imported.body.consoles[1]).toMatchObject({ status: "idle", noRun: true, background: "#320000" });
     expect(imported.body.consoles[1].autoStartOnOpen).toBeUndefined();
@@ -380,6 +380,7 @@ describe("HTTP API", () => {
 
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ id: created.id, name: "after rename", command: "echo ok", cwd: dir });
+    expect(list[0].lastStartedAt).toBe(created.lastStartedAt);
     expect(secondFactory.sessions).toHaveLength(0);
   });
 

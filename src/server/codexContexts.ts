@@ -35,6 +35,7 @@ export function loadCodexContextPresets(options: CodexContextLoadOptions): Conso
     command: preset.command,
     shell: process.platform === "win32" ? "cmd.exe" : undefined,
     noRun: true,
+    persistent: true,
     background: preset.background,
     ansiParserEnabled: true,
     start: false
