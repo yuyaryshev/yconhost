@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "generate:icons": "node scripts/generate-app-icons.mjs",
     "dev": "vite --host 127.0.0.1",
     "dev:server": "tsx watch src/server/index.ts",
     "build": "tsc -p tsconfig.json && vite build",
