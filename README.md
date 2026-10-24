@@ -55,6 +55,6 @@ The production pm2 config is in `ecosystem.config.cjs` and currently binds to `1
 
 ## Current Limitations
 
-- yconhost uses the ConPTY/pipe backend only. It does not expose or manage separate native Windows console windows.
+- The default backend uses ConPTY pipes. The optional yopenconsole backend also supports showing/hiding the same running console in a native window; see [Native CLI](docs/native_cli.md).
 - Re-attach to already running processes after yconhost restart is not supported in the simplified pipe-only model.
 - Chrome MCP UI testing may fail when the shared Chrome DevTools MCP profile is already locked by another process.

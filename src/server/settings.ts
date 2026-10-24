@@ -11,7 +11,9 @@ const defaults: AppSettings = {
   terminal: {
     cols: 160,
     rows: 40,
-    scrollback: 0
+    scrollback: 0,
+    host: "standard",
+    yopenconsolePath: "D:\\b\\Mine\\GIT_Work\\yopenconsole\\bin\\x64\\Release\\yopenconsole.exe"
   },
   log: {
     maxBytes: 10 * 1024 * 1024,
@@ -34,6 +36,11 @@ const defaults: AppSettings = {
 };
 
 function mergeSettings(value: Partial<AppSettings>): AppSettings {
+  const host = value.terminal?.host;
+  if (host !== undefined && host !== "standard" && host !== "yopenconsole") throw new Error("Unknown terminal host");
+  if (host === "yopenconsole" && !fs.existsSync(value.terminal?.yopenconsolePath ?? defaults.terminal.yopenconsolePath!)) {
+    throw new Error("yopenconsole executable not found");
+  }
   return {
     ...defaults,
     ...value,

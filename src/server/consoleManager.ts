@@ -196,19 +196,35 @@ export class ConsoleManager {
           cwd,
           env: process.env,
           cols: this.settings.terminal.cols,
-          rows: this.settings.terminal.rows
+          rows: this.settings.terminal.rows,
+          host: this.settings.terminal.host,
+          yopenconsolePath: this.settings.terminal.yopenconsolePath,
+          dataDir: this.settings.dataDir
         });
         managed.session = session;
         record.pid = session.pid;
-        record.status = "running";
+        record.status = session.onReady ? "starting" : "running";
         record.lastStartedAt = new Date().toISOString();
         this.persist();
 
         session.onData((chunk) => this.capture(managed, chunk));
+        session.onReady?.((pid) => {
+          if (this.consoles.get(id) !== managed || managed.session !== session) return;
+          record.pid = pid;
+          record.status = "running";
+          record.updatedAt = new Date().toISOString();
+          this.persist();
+        });
+        session.onNativeWindow?.((state) => {
+          if (this.consoles.get(id) !== managed || managed.session !== session) return;
+          record.nativeCli = state;
+          managed.mirror.resize(state.cols, state.rows);
+        });
         session.onExit((exitCode) => {
           if (this.consoles.get(id) !== managed) return;
           record.exitCode = exitCode;
           record.pid = undefined;
+          record.nativeCli = undefined;
           record.status = "exited";
           record.updatedAt = new Date().toISOString();
           managed.session = undefined;
@@ -470,8 +486,19 @@ export class ConsoleManager {
     const safeCols = Math.max(20, Math.min(400, Math.floor(cols)));
     const safeRows = Math.max(5, Math.min(200, Math.floor(rows)));
     item.session?.resize(safeCols, safeRows);
-    item.mirror.resize(safeCols, safeRows);
+    if (!item.record.nativeCli?.visible) item.mirror.resize(safeCols, safeRows);
     this.refreshCards(item);
+  }
+
+  async nativeWindow(id: string, visible?: boolean) {
+    const item = this.requireConsole(id);
+    this.touchAccess(item);
+    const session = item.session;
+    if (!session?.nativeWindow) throw new Error("Native CLI requires a running yopenconsole session");
+    const state = await session.nativeWindow(visible);
+    if (this.consoles.get(id) !== item || item.session !== session) throw new Error("Console session changed");
+    item.record.nativeCli = state;
+    return state;
   }
 
   signal(id: string, signal: string): void {
@@ -518,6 +545,7 @@ export class ConsoleManager {
       item.session.kill();
       item.session = undefined;
       item.record.pid = undefined;
+      item.record.nativeCli = undefined;
       item.record.status = "exited";
       item.record.updatedAt = new Date().toISOString();
       this.persist();

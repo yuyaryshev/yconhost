@@ -132,6 +132,14 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
 
   app.post("/api/consoles/:id/restart", route(respond((req) => manager.restart(param(req, "id")))));
 
+  app.get("/api/consoles/:id/native", route(async (req, res) => {
+    res.json(await manager.nativeWindow(param(req, "id")));
+  }));
+  app.post("/api/consoles/:id/native", route(async (req, res) => {
+    if (typeof req.body.visible !== "boolean") throw new Error("visible must be a boolean");
+    res.json(await manager.nativeWindow(param(req, "id"), req.body.visible));
+  }));
+
   app.post("/api/consoles/:id/start", route(respond((req) => manager.start(param(req, "id")))));
 
   app.post("/api/consoles/:id/name", route(respond((req) => manager.rename(param(req, "id"), String(req.body.name ?? "")))));

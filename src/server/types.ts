@@ -1,5 +1,11 @@
 export type ConsoleStatus = "idle" | "starting" | "running" | "ready" | "exited";
 
+export interface NativeWindowState {
+  visible: boolean;
+  cols: number;
+  rows: number;
+}
+
 export interface ConsoleCreateRequest {
   lastStartedAt?: string;
   createdAt?: string;
@@ -83,6 +89,7 @@ export interface ConsoleRecord {
   exitCode?: number;
   readonly?: boolean;
   source?: "managed" | "pm2";
+  nativeCli?: NativeWindowState;
 }
 
 export interface ConsoleSnapshot extends ConsoleRecord {
@@ -154,6 +161,8 @@ export interface AppSettings {
     cols: number;
     rows: number;
     scrollback: number;
+    host?: "standard" | "yopenconsole";
+    yopenconsolePath?: string;
   };
   log: {
     maxBytes: number;

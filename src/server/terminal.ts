@@ -5,6 +5,18 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import pty from "node-pty";
 import treeKill from "tree-kill";
+import type { NativeWindowState } from "./types.js";
+import { spawnNativeTerminal } from "./nativeTerminal.js";
+
+export interface TerminalOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  cols: number;
+  rows: number;
+  host?: "standard" | "yopenconsole";
+  yopenconsolePath?: string;
+  dataDir?: string;
+}
 
 export interface TerminalSession {
   readonly pid?: number;
@@ -13,14 +25,18 @@ export interface TerminalSession {
   kill(signal?: string): void;
   onData(listener: (chunk: string) => void): void;
   onExit(listener: (exitCode?: number) => void): void;
+  onReady?(listener: (pid: number) => void): void;
+  onNativeWindow?(listener: (state: NativeWindowState) => void): void;
+  nativeWindow?(visible?: boolean): Promise<NativeWindowState>;
 }
 
 export interface TerminalFactory {
-  spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; cols: number; rows: number }): TerminalSession;
+  spawn(shell: string, args: string[], options: TerminalOptions): TerminalSession;
 }
 
 export class PtyTerminalFactory implements TerminalFactory {
-  spawn(shell: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; cols: number; rows: number }): TerminalSession {
+  spawn(shell: string, args: string[], options: TerminalOptions): TerminalSession {
+    if (options.host === "yopenconsole") return spawnNativeTerminal(shell, args, { ...options, env: buildTerminalEnv(options.env) });
     prepareConptyRuntime();
     const term = pty.spawn(shell, args, {
       cwd: options.cwd,

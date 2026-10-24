@@ -7,6 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { selectProjectConsoles } from "./projectConsoles.js";
 import { isWindowsTerminalReply } from "./terminalInput.js";
+import type { NativeWindowState } from "../server/types.js";
 
 type ConsoleRecord = {
   id: string;
@@ -30,6 +31,7 @@ type ConsoleRecord = {
   pid?: number;
   readonly?: boolean;
   source?: "managed" | "pm2";
+  nativeCli?: NativeWindowState;
 };
 
 type MywinsEntry = {
@@ -75,7 +77,7 @@ type AppSettings = {
   port: number;
   dataDir: string;
   defaultShell: string;
-  terminal: { cols: number; rows: number; scrollback: number };
+  terminal: { cols: number; rows: number; scrollback: number; host?: "standard" | "yopenconsole"; yopenconsolePath?: string };
   log: { maxBytes: number; rotateFiles: number; scrollbackBytes: number };
   cards: { maxPerConsole: number; scanTailBytes: number };
   codexContexts: { projectName: string; contextsPath: string; weztermPresetsPath?: string };
@@ -708,6 +710,17 @@ function PreferencesDialog({ dialog, settings, onSave }: { dialog: ReturnType<ty
           <input value={draft.terminal.cols} type="number" min={20} onChange={(event) => setNumber("terminal.cols", event.target.value)} />
         </label>
         <label>
+          Console host
+          <select value={draft.terminal.host ?? "standard"} onChange={(event) => setDraft((current) => ({ ...current, terminal: { ...current.terminal, host: event.target.value as "standard" | "yopenconsole" } }))}>
+            <option value="standard">Standard ConPTY</option>
+            <option value="yopenconsole">yopenconsole</option>
+          </select>
+        </label>
+        <label>
+          yopenconsole executable
+          <input value={draft.terminal.yopenconsolePath ?? ""} onChange={(event) => setDraft((current) => ({ ...current, terminal: { ...current.terminal, yopenconsolePath: event.target.value } }))} />
+        </label>
+        <label>
           Terminal rows
           <input value={draft.terminal.rows} type="number" min={5} onChange={(event) => setNumber("terminal.rows", event.target.value)} />
         </label>
@@ -1006,6 +1019,11 @@ function TerminalPane({
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("info");
   const [atTerminal, setAtTerminal] = useState(true);
   const [consoleMenuOpen, setConsoleMenuOpen] = useState(false);
+  const [nativeBusy, setNativeBusy] = useState(false);
+  const [nativeError, setNativeError] = useState("");
+  const nativeRef = useRef(consoleRecord.nativeCli);
+  const fitRef = useRef<FitAddon | null>(null);
+  nativeRef.current = consoleRecord.nativeCli;
   const isReadonly = consoleRecord.readonly === true;
   const canRestart = !isReadonly && consoleRecord.status !== "idle" && consoleRecord.status !== "exited";
   const terminalBackground = consoleRecord.backgroundColor?.[theme] ?? terminalThemes[theme].background;
@@ -1033,6 +1051,7 @@ function TerminalPane({
       theme: { ...terminalThemes[theme], background: terminalBackground }
     });
     const fit = new FitAddon();
+    fitRef.current = fit;
     terminal.loadAddon(fit);
     terminal.open(hostRef.current!);
     const wheelToPage = (event: WheelEvent) => {
@@ -1093,6 +1112,10 @@ function TerminalPane({
     };
 
     function sendResize() {
+      if (nativeRef.current?.visible) {
+        terminal.resize(nativeRef.current.cols, nativeRef.current.rows);
+        return;
+      }
       fit.fit();
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify({ type: "resize", consoleId: consoleRecord.id, cols: terminal.cols, rows: terminal.rows }));
@@ -1108,8 +1131,39 @@ function TerminalPane({
       hostRef.current?.removeEventListener("wheel", wheelToPage);
       terminal.dispose();
       terminalRef.current = null;
+      fitRef.current = null;
     };
   }, [consoleRecord.id, consoleRecord.lastStartedAt, theme, isReadonly, terminalBackground, canRestart]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    if (consoleRecord.nativeCli?.visible) {
+      terminal.resize(consoleRecord.nativeCli.cols, consoleRecord.nativeCli.rows);
+    } else {
+      fitRef.current?.fit();
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: "resize", consoleId: consoleRecord.id, cols: terminal.cols, rows: terminal.rows }));
+      }
+    }
+  }, [consoleRecord.id, consoleRecord.nativeCli?.visible, consoleRecord.nativeCli?.cols, consoleRecord.nativeCli?.rows]);
+
+  useEffect(() => { setNativeError(""); setNativeBusy(false); }, [consoleRecord.id, consoleRecord.lastStartedAt]);
+
+  async function toggleNative() {
+    setNativeBusy(true);
+    setNativeError("");
+    try {
+      const response = await fetch(`/api/consoles/${consoleRecord.id}/native`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visible: !consoleRecord.nativeCli?.visible })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Native CLI request failed");
+      await onChanged();
+    } catch (error) { setNativeError(error instanceof Error ? error.message : String(error)); }
+    finally { setNativeBusy(false); }
+  }
 
   useEffect(() => {
     if (!isReadonly || !terminalRef.current) return;
@@ -1162,6 +1216,7 @@ function TerminalPane({
               <button onClick={onMarkRead}>Mark read</button>
               <button onClick={() => post("signal", { signal: "ctrl+c" })}>Ctrl+C</button>
               <button onClick={() => post(canRestart ? "restart" : "start")}>{canRestart ? "Restart" : "Start"}</button>
+              {consoleRecord.nativeCli && canRestart ? <button disabled={nativeBusy} onClick={() => void toggleNative()}>{consoleRecord.nativeCli.visible ? "Скрыть native cli" : "Показать native cli"}</button> : null}
               {consoleRecord.status !== "idle" && consoleRecord.status !== "exited" ? <button onClick={onClose}>Close</button> : null}
               {consoleRecord.projectPath ? (
                 <div className="menu-wrap">
@@ -1208,6 +1263,7 @@ function TerminalPane({
           </button>
         </div>
       </header>
+      {nativeError ? <div role="alert">{nativeError}</div> : null}
       <div className="console-scroll" ref={scrollRef} onScroll={updateScrollState}>
         {!cardsCollapsed ? <CardsPanel cards={filteredCards} /> : null}
         <div className="terminal-stage">
