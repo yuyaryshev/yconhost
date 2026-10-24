@@ -7,6 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { selectProjectConsoles } from "./projectConsoles.js";
 import { isWindowsTerminalReply } from "./terminalInput.js";
+import { unreadCards } from "./cards.js";
 import type { NativeWindowState } from "../server/types.js";
 
 type ConsoleRecord = {
@@ -22,6 +23,7 @@ type ConsoleRecord = {
   status: "idle" | "starting" | "running" | "ready" | "exited";
   errorCount: number;
   unseenErrorCount: number;
+  readCardHashes?: string[];
   updatedAt: string;
   lastStartedAt?: string;
   lastInputAt?: string;
@@ -53,6 +55,8 @@ type ErrorMatch = {
 
 type ExtractedCard = {
   id: string;
+  hash: string;
+  read?: boolean;
   kind: "persistent" | "temporary";
   category: "error" | "warning" | "info" | "message";
   title: string;
@@ -1036,8 +1040,9 @@ function TerminalPane({
   const canRestart = !isReadonly && consoleRecord.status !== "idle" && consoleRecord.status !== "exited";
   const terminalBackground = consoleRecord.backgroundColor?.[theme] ?? terminalThemes[theme].background;
 
-  const filteredCards = cards.filter((card) => severityRank(card.category) >= severityRank(severityFilter));
-  const cardCounts = cards.reduce(
+  const unread = useMemo(() => unreadCards(cards, consoleRecord.readCardHashes), [cards, consoleRecord.readCardHashes]);
+  const filteredCards = unread.filter((card) => severityRank(card.category) >= severityRank(severityFilter));
+  const cardCounts = unread.reduce(
     (acc, card) => {
       acc[card.category] += 1;
       return acc;
@@ -1192,7 +1197,16 @@ function TerminalPane({
     fetch(`/api/consoles/${consoleRecord.id}`)
       .then((response) => response.json())
       .then((data: ConsoleSnapshot) => setCards(data.cards ?? []));
-  }, [consoleRecord.id, consoleRecord.errorCount]);
+  }, [consoleRecord.id, consoleRecord.errorCount, consoleRecord.unseenErrorCount]);
+
+  async function markCardsRead() {
+    await onMarkRead();
+    const response = await fetch(`/api/consoles/${consoleRecord.id}`);
+    if (response.ok) {
+      const snapshot = await response.json() as ConsoleSnapshot;
+      setCards(snapshot.cards ?? []);
+    }
+  }
 
   function updateScrollState() {
     const node = scrollRef.current;
@@ -1222,7 +1236,7 @@ function TerminalPane({
           </div>
           {!isReadonly ? (
             <div className="toolbar-actions">
-              <button onClick={onMarkRead}>Mark read</button>
+              <button onClick={() => void markCardsRead()}>Mark read</button>
               <button onClick={() => post("signal", { signal: "ctrl+c" })}>Ctrl+C</button>
               <button onClick={() => post(canRestart ? "restart" : "start")}>{canRestart ? "Restart" : "Start"}</button>
               {consoleRecord.nativeCli && canRestart ? <button disabled={nativeBusy} onClick={() => void toggleNative()}>{consoleRecord.nativeCli.visible ? "Скрыть native cli" : "Показать native cli"}</button> : null}

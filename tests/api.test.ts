@@ -134,6 +134,51 @@ describe("HTTP API", () => {
     await request(app).get(`/api/consoles/${created.body.id}`).expect(404);
   });
 
+  it("marks pending cards read before the debounce fires and only shows subsequent errors as unread", async () => {
+    const created = await request(app).post("/api/consoles").send({ name: "read-race", cwd: dir }).expect(200);
+    factory.sessions[0].push("Error: first failure\r\nWarning: old diagnostic\r\nInfo: old message\r\n");
+    const read = await request(app).post(`/api/consoles/${created.body.id}/read`).expect(200);
+    expect(read.body.unseenErrorCount).toBe(0);
+    expect(read.body.readCardHashes).toHaveLength(3);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const snapshot = await request(app).get(`/api/consoles/${created.body.id}`).expect(200);
+    expect(snapshot.body.cards).toHaveLength(3);
+    expect(snapshot.body.cards.every((card: { read: boolean }) => card.read)).toBe(true);
+    expect(snapshot.body.unseenErrorCount).toBe(0);
+    expect(snapshot.body.outputTail).toContain("first failure");
+
+    factory.sessions[0].push("Error: second failure\r\n");
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const updated = await request(app).get(`/api/consoles/${created.body.id}`).expect(200);
+    expect(updated.body.unseenErrorCount).toBe(1);
+    expect(updated.body.cards.filter((card: { read: boolean }) => !card.read).map((card: { title: string }) => card.title)).toEqual(["Error: second failure"]);
+  });
+
+  it("persists read cards across restart and flushes pending project-wide acknowledgements", async () => {
+    const settings = testSettings(dir);
+    const storedFactory = new FakeTerminalFactory();
+    const stored = new ConsoleManager(settings, new LogStore(settings), storedFactory, new ConsoleStore(settings));
+    const storedApp = createApp(stored, { pm2: false });
+    let restored: ConsoleManager | undefined;
+    try {
+      const first = stored.create({ name: "first", project: "read-project", cwd: dir });
+      const second = stored.create({ name: "second", project: "read-project", cwd: dir });
+      storedFactory.sessions[0].push("Error: first pending\r\n");
+      storedFactory.sessions[1].push("Error: second pending\r\n");
+      await request(storedApp).post("/api/projects/read-project/read").expect(200);
+      expect(stored.get(first.id).cards[0].read).toBe(true);
+      expect(stored.get(second.id).cards[0].read).toBe(true);
+      stored.dispose();
+
+      const restoredFactory = new FakeTerminalFactory();
+      restored = new ConsoleManager(settings, new LogStore(settings), restoredFactory, new ConsoleStore(settings));
+      expect(restoredFactory.sessions).toHaveLength(0);
+      expect(restored.get(first.id).unseenErrorCount).toBe(0);
+      expect(restored.get(first.id).cards[0].read).toBe(true);
+      expect(restored.readOutput(second.id)).toContain("second pending");
+    } finally { stored.dispose(); restored?.dispose(); }
+  });
+
   it("creates consoles from my_wins.json in order and keeps no_run entries idle", async () => {
     fs.writeFileSync(
       path.join(dir, "my_wins.json"),

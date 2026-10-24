@@ -138,6 +138,7 @@ export interface ExtractedCard {
   message: string;
   rawText: string;
   hash: string;
+  read?: boolean;
   createdAt: string;
   bufferY?: number;
 }

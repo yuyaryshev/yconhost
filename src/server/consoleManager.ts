@@ -84,7 +84,12 @@ export class ConsoleManager {
   get(id: string): ConsoleSnapshot {
     const item = this.requireConsole(id);
     this.touchAccess(item);
-    return { ...item.record, outputTail: item.tail, errorMatches: cardsToMatches(item.cards), cards: item.cards };
+    return {
+      ...item.record,
+      outputTail: item.tail,
+      errorMatches: cardsToMatches(item.cards),
+      cards: item.cards.map((card) => ({ ...card, read: item.readHashes.has(card.hash) }))
+    };
   }
 
   getState(id: string, tailLines = 8): ConsoleSessionState {
@@ -558,6 +563,12 @@ export class ConsoleManager {
   markRead(id: string): ConsoleRecord {
     const item = this.requireConsole(id);
     this.touchAccess(item);
+    // Include output already received but not yet processed by the debounce timer.
+    if (item.cardRefreshTimer) {
+      clearTimeout(item.cardRefreshTimer);
+      item.cardRefreshTimer = undefined;
+      this.refreshCards(item);
+    }
     item.record.unseenErrorCount = 0;
     for (const card of item.cards) {
       item.readHashes.add(card.hash);
