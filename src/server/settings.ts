@@ -38,9 +38,6 @@ const defaults: AppSettings = {
 function mergeSettings(value: Partial<AppSettings>): AppSettings {
   const host = value.terminal?.host;
   if (host !== undefined && host !== "standard" && host !== "yopenconsole") throw new Error("Unknown terminal host");
-  if (host === "yopenconsole" && !fs.existsSync(value.terminal?.yopenconsolePath ?? defaults.terminal.yopenconsolePath!)) {
-    throw new Error("yopenconsole executable not found");
-  }
   return {
     ...defaults,
     ...value,
@@ -67,7 +64,7 @@ function mergeSettings(value: Partial<AppSettings>): AppSettings {
   };
 }
 
-export function loadSettings(filePath = path.resolve("settings.json5")): AppSettings {
+export function loadSettings(filePath = process.env.YCONHOST_SETTINGS_PATH ?? path.resolve("settings.json5")): AppSettings {
   if (!fs.existsSync(filePath)) {
     return defaults;
   }
@@ -76,8 +73,11 @@ export function loadSettings(filePath = path.resolve("settings.json5")): AppSett
   return mergeSettings(parsed);
 }
 
-export function saveSettings(settings: AppSettings, filePath = path.resolve("settings.json5")): AppSettings {
+export function saveSettings(settings: AppSettings, filePath = process.env.YCONHOST_SETTINGS_PATH ?? path.resolve("settings.json5")): AppSettings {
   const merged = mergeSettings(settings);
+  if (merged.terminal.host === "yopenconsole" && (!merged.terminal.yopenconsolePath || !fs.existsSync(merged.terminal.yopenconsolePath) || !fs.statSync(merged.terminal.yopenconsolePath).isFile())) {
+    throw new Error("yopenconsole executable not found");
+  }
   fs.writeFileSync(filePath, JSON5.stringify(merged, null, 2), "utf8");
   return merged;
 }

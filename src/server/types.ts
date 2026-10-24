@@ -1,6 +1,7 @@
 export type ConsoleStatus = "idle" | "starting" | "running" | "ready" | "exited";
 
 export interface NativeWindowState {
+  hwnd?: string;
   visible: boolean;
   cols: number;
   rows: number;

@@ -104,7 +104,7 @@ export class ConsoleManager {
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.startTemporaryCleanup();
     for (const item of this.consoles.values()) {
-      item.mirror.resize(settings.terminal.cols, settings.terminal.rows);
+      if (!item.record.nativeCli?.visible) item.mirror.resize(settings.terminal.cols, settings.terminal.rows);
       item.session?.resize(settings.terminal.cols, settings.terminal.rows);
       item.tail = this.logs.read(item.record.id).slice(-settings.log.scrollbackBytes);
       this.refreshCards(item);
@@ -202,6 +202,9 @@ export class ConsoleManager {
           dataDir: this.settings.dataDir
         });
         managed.session = session;
+        // A new native host uses absolute cursor positions from a fresh screen.
+        // Keep older log/cards, but do not replay their terminal modes or screen contents into this run.
+        if (this.settings.terminal.host === "yopenconsole") this.capture(managed, "\x1b[?1049l\x1b[!p\x1b[2J\x1b[H");
         record.pid = session.pid;
         record.status = session.onReady ? "starting" : "running";
         record.lastStartedAt = new Date().toISOString();
@@ -614,6 +617,7 @@ export class ConsoleManager {
     item.session?.kill();
     item.session = undefined;
     item.record.pid = undefined;
+    item.record.nativeCli = undefined;
     item.record.status = "idle";
     item.record.updatedAt = new Date().toISOString();
     this.persist();

@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import type { TerminalOptions, TerminalSession } from "./terminal.js";
 import type { NativeWindowState } from "./types.js";
+import type { NativeWorkerRequest, NativeWorkerResponse } from "./nativeProtocol.js";
 
 function stageRuntime(executable: string, dataDir: string): string {
   const require = createRequire(import.meta.url);
@@ -16,12 +17,16 @@ function stageRuntime(executable: string, dataDir: string): string {
   if (!nativeDir) throw new Error("node-pty native module not found");
   const bundled = path.join(root, "prebuilds", `win32-${process.arch}`, "conpty");
   const hash = crypto.createHash("sha256");
+  hash.update("yconhost-native-runtime-v2");
   for (const file of [executable, path.join(nativeDir, "conpty.node"), path.join(bundled, "conpty.dll"), path.join(root, "package.json")]) hash.update(fs.readFileSync(file));
   const dir = path.resolve(dataDir, "native-runtimes", hash.digest("hex").slice(0, 24));
   if (!fs.existsSync(path.join(dir, "package.json"))) {
     const staging = `${dir}-${crypto.randomUUID()}`;
     fs.mkdirSync(path.join(staging, "build", "Release", "conpty"), { recursive: true });
-    fs.cpSync(path.join(root, "lib"), path.join(staging, "lib"), { recursive: true });
+    fs.cpSync(path.join(root, "lib"), path.join(staging, "lib"), {
+      recursive: true,
+      filter: (source) => !path.basename(source).includes(".test.")
+    });
     fs.copyFileSync(path.join(nativeDir, "conpty.node"), path.join(staging, "build", "Release", "conpty.node"));
     fs.copyFileSync(path.join(bundled, "conpty.dll"), path.join(staging, "build", "Release", "conpty", "conpty.dll"));
     fs.copyFileSync(executable, path.join(staging, "build", "Release", "conpty", "OpenConsole.exe"));
@@ -51,7 +56,7 @@ export function spawnNativeTerminal(shell: string, args: string[], options: Term
   let shellExitCode: number | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   const requests = new Map<number, { resolve: (state: NativeWindowState) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  const send = (message: object) => { if (child.connected) child.send(message, (error) => { if (error && !closing) failure = error.message; }); };
+  const send = (message: NativeWorkerRequest) => { if (child.connected) child.send(message, (error) => { if (error && !closing) failure = error.message; }); };
   const finish = (code?: number) => {
     if (exited) return;
     exited = true;
@@ -62,13 +67,19 @@ export function spawnNativeTerminal(shell: string, args: string[], options: Term
     events.emit("exit", code);
   };
   child.stderr?.on("data", (data: Buffer) => { failure = (failure + data.toString()).slice(-4096); });
-  child.on("message", (message: any) => {
+  child.on("message", (raw) => {
+    const message = raw as NativeWorkerResponse;
     if (message.type === "ready") { pid = message.pid; events.emit("ready", pid); }
     if (message.type === "data") events.emit("data", message.data);
     if (message.type === "native") events.emit("native", message.state);
     if (message.type === "reply") {
       const request = requests.get(message.id);
-      if (request) { clearTimeout(request.timer); requests.delete(message.id); message.error ? request.reject(new Error(message.error)) : request.resolve(message.state); }
+      if (request) {
+        clearTimeout(request.timer);
+        requests.delete(message.id);
+        if ("error" in message) request.reject(new Error(message.error));
+        else request.resolve(message.state);
+      }
     }
     if (message.type === "failure") failure = message.error;
     if (message.type === "exit") shellExitCode = message.exitCode;

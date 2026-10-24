@@ -3,18 +3,21 @@ import { createRequire } from "node:module";
 import type { IPty } from "node-pty";
 import { NativeControl } from "./nativeControl.js";
 import type { NativeWindowState } from "./types.js";
+import type { NativeStartRequest, NativeWorkerRequest, NativeWorkerResponse } from "./nativeProtocol.js";
 
 let terminal: IPty | undefined;
 let control: NativeControl | undefined;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
+let stopTimer: ReturnType<typeof setTimeout> | undefined;
 let exiting = false;
 let released = false;
 let closing = false;
 let state: NativeWindowState = { visible: false, cols: 160, rows: 40 };
 let browserSize = { cols: 160, rows: 40 };
+let hwnd: string | undefined;
 let started: Promise<void> | undefined;
 
-function send(message: object): void {
+function send(message: NativeWorkerResponse): void {
   if (process.connected) process.send?.(message, () => undefined);
 }
 
@@ -31,6 +34,7 @@ function finish(exitCode = 0): void {
   if (exiting) return;
   exiting = true;
   if (pollTimer) clearTimeout(pollTimer);
+  if (stopTimer) clearTimeout(stopTimer);
   control?.close();
   release();
   send({ type: "exit", exitCode });
@@ -40,6 +44,7 @@ function finish(exitCode = 0): void {
 function kill(): void {
   if (closing || exiting) return;
   closing = true;
+  stopTimer = setTimeout(() => finish(), 4000);
   if (!terminal) { finish(); return; }
   execFile("taskkill.exe", ["/pid", String(terminal.pid), "/T", "/F"], { windowsHide: true }, () => release());
 }
@@ -49,7 +54,7 @@ async function readState(): Promise<NativeWindowState> {
   const visible = await control.command("visible") === "ok 1";
   if (state.visible && !visible && terminal && !closing) terminal.resize(browserSize.cols, browserSize.rows);
   const size = (await control.command("size")).split(" ");
-  const next = { visible, cols: Number(size[1]), rows: Number(size[2]) };
+  const next = { visible, cols: Number(size[1]), rows: Number(size[2]), hwnd };
   if (!Number.isInteger(next.cols) || !Number.isInteger(next.rows) || next.cols < 1 || next.rows < 1) throw new Error("Invalid native viewport size");
   if (JSON.stringify(state) !== JSON.stringify(next)) send({ type: "native", state: next });
   state = next;
@@ -64,7 +69,7 @@ async function poll(): Promise<void> {
   if (!closing && !exiting) pollTimer = setTimeout(() => void poll(), 250);
 }
 
-async function start(message: any): Promise<void> {
+async function start(message: NativeStartRequest): Promise<void> {
   const pty = createRequire(import.meta.url)(message.runtime) as typeof import("node-pty");
   browserSize = { cols: message.options.cols, rows: message.options.rows };
   state = { visible: false, ...browserSize };
@@ -79,6 +84,7 @@ async function start(message: any): Promise<void> {
   control = new NativeControl(`\\\\.\\pipe\\yopenconsole.${message.pipeId}`);
   await control.connect();
   await control.command("close-mode hide");
+  hwnd = (await control.command("hwnd")).slice(3);
   await readState();
   if (closing || exiting) return;
   send({ type: "native", state });
@@ -86,10 +92,13 @@ async function start(message: any): Promise<void> {
   void poll();
 }
 
-process.on("message", (message: any) => {
+process.on("message", (raw) => {
+  const message = raw as NativeWorkerRequest;
   if (message.type === "start") {
     started = start(message);
-    started.catch((error) => { send({ type: "failure", error: String(error) }); kill(); });
+    started.catch((error) => {
+      if (!closing && !exiting) { send({ type: "failure", error: String(error) }); kill(); }
+    });
     return;
   }
   if (message.type === "kill") { kill(); return; }
@@ -113,7 +122,7 @@ process.on("message", (message: any) => {
       send({ type: "reply", id: message.id, state: await readState() });
     }
   })().catch((error) => {
-    if (message.id) send({ type: "reply", id: message.id, error: String(error) });
+    if (message.type === "native") send({ type: "reply", id: message.id, error: String(error) });
     else if (!closing && !exiting) { send({ type: "failure", error: String(error) }); kill(); }
   });
 });

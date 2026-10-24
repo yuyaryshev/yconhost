@@ -589,7 +589,8 @@ function App() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ settings: next })
             });
-            const data = (await response.json()) as { settings: AppSettings };
+            const data = (await response.json()) as { settings: AppSettings; error?: string };
+            if (!response.ok) throw new Error(data.error ?? "Failed to save settings");
             setSettings(data.settings);
             preferencesDialog.hide();
           }}
@@ -686,6 +687,8 @@ function MywinsEntryDialog({
 
 function PreferencesDialog({ dialog, settings, onSave }: { dialog: ReturnType<typeof useDialogStore>; settings: AppSettings; onSave: (settings: AppSettings) => Promise<void> }) {
   const [draft, setDraft] = useState(settings);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => setDraft(settings), [settings]);
 
@@ -704,6 +707,7 @@ function PreferencesDialog({ dialog, settings, onSave }: { dialog: ReturnType<ty
   return (
     <Dialog store={dialog} className="dialog preferences-dialog" backdrop={<div className="backdrop" />}>
       <DialogHeading className="dialog-title">Preferences</DialogHeading>
+      {error ? <div role="alert">{error}</div> : null}
       <div className="settings-grid">
         <label>
           Terminal columns
@@ -751,7 +755,11 @@ function PreferencesDialog({ dialog, settings, onSave }: { dialog: ReturnType<ty
       </div>
       <div className="dialog-actions">
         <DialogDismiss className="secondary-button">Cancel</DialogDismiss>
-        <Button className="primary-button" onClick={() => void onSave(draft)}>
+        <Button className="primary-button" disabled={saving} onClick={() => {
+          setSaving(true);
+          setError("");
+          void onSave(draft).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))).finally(() => setSaving(false));
+        }}>
           Save
         </Button>
       </div>
@@ -1064,6 +1072,7 @@ function TerminalPane({
     helperTextarea?.setAttribute("id", `terminal-input-${consoleRecord.id}`);
     helperTextarea?.setAttribute("name", "terminalInput");
     fit.fit();
+    if (nativeRef.current?.visible) terminal.resize(nativeRef.current.cols, nativeRef.current.rows);
     terminalRef.current = terminal;
 
     fetch(`/api/consoles/${consoleRecord.id}/output`)
