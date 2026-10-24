@@ -13,11 +13,12 @@ export function extractCardsFromText(input: string, limit: number): ExtractedCar
   for (const block of groupBlocks(plain)) {
     const category = classify(block);
     if (!category) continue;
-    const hash = `${category}:${dedupeKey(block)}`;
+    const key = `${category}:${dedupeKey(block)}`;
+    const hash = compactCardHash(key);
     if (seen.has(hash)) continue;
     seen.add(hash);
     cards.push({
-      id: crypto.createHash("sha1").update(hash).digest("hex"),
+      id: crypto.createHash("sha1").update(key).digest("hex"),
       kind: "persistent",
       category,
       title: titleFor(block, category),
@@ -29,6 +30,10 @@ export function extractCardsFromText(input: string, limit: number): ExtractedCar
   }
 
   return cards.slice(-limit);
+}
+
+export function compactCardHash(value: string): string {
+  return /^sha256:[a-f0-9]{64}$/.test(value) ? value : `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
 export function stripAnsi(input: string): string {

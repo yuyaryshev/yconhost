@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractCardsFromText, stripAnsi } from "../src/server/cardExtractor.js";
+import { compactCardHash, extractCardsFromText, stripAnsi } from "../src/server/cardExtractor.js";
 
 describe("card extractor", () => {
   it("strips ANSI sequences", () => {
@@ -38,5 +38,15 @@ describe("card extractor", () => {
   it("treats warning before error as warning severity", () => {
     const cards = extractCardsFromText("Warning: Error boundary fallback was used\nError: hard failure\n", 20);
     expect(cards.map((card) => card.category)).toEqual(["warning", "error"]);
+  });
+
+  it("uses bounded read keys even for large single-line terminal output", () => {
+    const message = `Error: ${"x".repeat(750_000)}`;
+    const [card] = extractCardsFromText(message, 20);
+    expect(card.hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(card.hash).toHaveLength(71);
+    expect(card.hash).toBe(compactCardHash(`error:${message}`));
+    expect(compactCardHash(card.hash)).toBe(card.hash);
+    expect(card.message).toBe(message);
   });
 });

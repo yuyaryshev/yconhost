@@ -39,7 +39,8 @@ export class ConsoleStore {
       persistent: record.persistent,
       background: record.background,
       backgroundColor: record.backgroundColor,
-      ansiParserEnabled: record.ansiParserEnabled
+      ansiParserEnabled: record.ansiParserEnabled,
+      readCardHashes: record.readCardHashes
     }));
     fs.writeFileSync(this.file, `${JSON.stringify(definitions, null, 2)}\n`, "utf8");
   }

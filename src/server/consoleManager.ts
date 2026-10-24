@@ -4,7 +4,7 @@ import path from "node:path";
 import xtermHeadless from "@xterm/headless";
 import type { Terminal as HeadlessTerminal } from "@xterm/headless";
 import JSON5 from "json5";
-import { extractCardsFromText, mergeCards } from "./cardExtractor.js";
+import { compactCardHash, extractCardsFromText, mergeCards } from "./cardExtractor.js";
 import { loadCodexContextPresets } from "./codexContexts.js";
 import type { LogStore } from "./logStore.js";
 import type { ConsoleStore } from "./consoleStore.js";
@@ -167,7 +167,7 @@ export class ConsoleManager {
       autoStartOnOpen: request.autoStartOnOpen,
       status: startProcess ? "starting" : "idle",
       ansiParserEnabled: request.ansiParserEnabled ?? true,
-      readCardHashes: request.readCardHashes ?? [],
+      readCardHashes: (request.readCardHashes ?? []).map(compactCardHash),
       errorCount: 0,
       unseenErrorCount: 0,
       createdAt: request.createdAt ?? now,

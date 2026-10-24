@@ -140,6 +140,7 @@ describe("HTTP API", () => {
     const read = await request(app).post(`/api/consoles/${created.body.id}/read`).expect(200);
     expect(read.body.unseenErrorCount).toBe(0);
     expect(read.body.readCardHashes).toHaveLength(3);
+    expect(read.body.readCardHashes.every((hash: string) => /^sha256:[a-f0-9]{64}$/.test(hash))).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 600));
     const snapshot = await request(app).get(`/api/consoles/${created.body.id}`).expect(200);
     expect(snapshot.body.cards).toHaveLength(3);
@@ -170,11 +171,18 @@ describe("HTTP API", () => {
       expect(stored.get(second.id).cards[0].read).toBe(true);
       stored.dispose();
 
+      // Older versions stored the normalized diagnostic text as the read key.
+      const file = path.join(dir, "consoles.json");
+      const definitions = JSON.parse(fs.readFileSync(file, "utf8"));
+      definitions.find((item: { id: string }) => item.id === first.id).readCardHashes = ["error:Error: first pending"];
+      fs.writeFileSync(file, JSON.stringify(definitions));
+
       const restoredFactory = new FakeTerminalFactory();
       restored = new ConsoleManager(settings, new LogStore(settings), restoredFactory, new ConsoleStore(settings));
       expect(restoredFactory.sessions).toHaveLength(0);
       expect(restored.get(first.id).unseenErrorCount).toBe(0);
       expect(restored.get(first.id).cards[0].read).toBe(true);
+      expect(restored.get(first.id).readCardHashes?.[0]).toMatch(/^sha256:[a-f0-9]{64}$/);
       expect(restored.readOutput(second.id)).toContain("second pending");
     } finally { stored.dispose(); restored?.dispose(); }
   });

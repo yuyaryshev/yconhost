@@ -1035,6 +1035,8 @@ function TerminalPane({
   const [nativeError, setNativeError] = useState("");
   const nativeRef = useRef(consoleRecord.nativeCli);
   const fitRef = useRef<FitAddon | null>(null);
+  const consoleIdRef = useRef(consoleRecord.id);
+  consoleIdRef.current = consoleRecord.id;
   nativeRef.current = consoleRecord.nativeCli;
   const isReadonly = consoleRecord.readonly === true;
   const canRestart = !isReadonly && consoleRecord.status !== "idle" && consoleRecord.status !== "exited";
@@ -1200,11 +1202,12 @@ function TerminalPane({
   }, [consoleRecord.id, consoleRecord.errorCount, consoleRecord.unseenErrorCount]);
 
   async function markCardsRead() {
+    const id = consoleRecord.id;
     await onMarkRead();
-    const response = await fetch(`/api/consoles/${consoleRecord.id}`);
+    const response = await fetch(`/api/consoles/${id}`);
     if (response.ok) {
       const snapshot = await response.json() as ConsoleSnapshot;
-      setCards(snapshot.cards ?? []);
+      if (consoleIdRef.current === id) setCards(snapshot.cards ?? []);
     }
   }
 
