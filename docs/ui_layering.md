@@ -17,3 +17,16 @@ Their surfaces and controls must remain visible and usable above the terminal.
 Backdrop clicks must not reach the terminal. After dismissing the dialog, command
 text must remain selectable. Check both themes, narrow viewports, and a running
 terminal as well as an idle slot. These checks must not start or stop user commands.
+
+Use screenshots as well as hit testing: Ariakit makes background content inert,
+so `elementFromPoint` can report unobstructed dialog controls even when an escaped
+background layer still paints over them.
+
+2026-10-24: captured the actual desktop and reproduced Preferences being covered
+by the blue idle-console background for `odbp_requirements`. After the fix, verified
+Preferences, Open folder, Create console, Add console and Console settings in Chrome;
+also checked the light theme, a 390x844 viewport, and the existing running terminal.
+Dialog z-index remained `auto`; the shell became isolated and the command surface
+lost its positive z-index. No settings were saved or user consoles restarted.
+The production build and all 38 tests passed. Updated frontend assets are served
+immediately; reload the browser/PWA to use them, without restarting the backend.
