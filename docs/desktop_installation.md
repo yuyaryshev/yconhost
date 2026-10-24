@@ -9,3 +9,9 @@ Installation icons are explicit PNGs at 192 and 512 pixels, plus a separate full
 A previously installed manual app may retain its generated letter icon. Reinstall it from the updated page for immediate replacement. Do not select removal of browsing/site data when uninstalling if local UI preferences should be retained. Browser-managed icon updates can be delayed or require confirmation. Installing or removing the desktop shortcut does not delete server-side console definitions or stop their processes.
 
 No service worker caches terminal pages or API traffic: the local server must be available for the application to work.
+
+## Verification, 2026-10-24
+
+Production build passed. Chrome reported no manifest or installability errors in a non-incognito test profile. All three manifest icons were served as PNG with their declared dimensions. A real test installation stored the new artwork in Chrome's OS integration icon resources; launching in standalone mode was verified. The test installation was removed afterward without touching the user's browser profile or existing installations.
+
+Screenshots are under the ignored output/playwright directory: browser-tab-before.png, installed-app-after.png and installed-icon-from-chrome.png. The original browser-tab screenshot confirmed that the old SVG favicon worked in tabs; the application previously had no manifest installation icon set. Server processes and console sessions were not restarted for this update.
