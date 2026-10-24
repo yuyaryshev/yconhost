@@ -60,6 +60,8 @@ select {
 }
 
 .app-shell {
+  /* Keep terminal and menu layers below portaled modal surfaces. */
+  isolation: isolate;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   height: 100vh;
@@ -507,7 +509,6 @@ h2 {
 .disabled-console-overlay {
   position: relative;
   min-height: max(620px, calc((100vh - 74px) * 0.66));
-  z-index: 2;
   display: flex;
   align-items: flex-start;
   padding: 18px;
