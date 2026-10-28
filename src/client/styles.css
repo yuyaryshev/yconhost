@@ -411,8 +411,39 @@ h2 {
 
 .toolbar-actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.gather-errors-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.gather-errors-control input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--text);
+}
+
+.project-gather-errors {
+  padding: 5px 8px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-actions .gather-errors-reset {
+  width: 32px;
+  padding: 0;
+  font-size: 19px;
 }
 
 .toolbar-actions button,

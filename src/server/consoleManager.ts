@@ -31,6 +31,7 @@ export class ConsoleManager {
   private persistTimer?: ReturnType<typeof setTimeout>;
   private cleanupTimer?: ReturnType<typeof setInterval>;
   private readonly managedProjects = new Set<string>();
+  private readonly projectGatherErrors = new Map<string, boolean>();
 
   constructor(
     private settings: AppSettings,
@@ -41,6 +42,7 @@ export class ConsoleManager {
   ) {
     for (const project of this.projectStore?.listManagedProjects() ?? []) {
       this.managedProjects.add(project.name);
+      if (typeof project.gatherErrors === "boolean") this.projectGatherErrors.set(project.name.toLowerCase(), project.gatherErrors);
     }
     for (const definition of this.store?.load() ?? []) {
       this.createManaged(definition, false);
@@ -71,6 +73,7 @@ export class ConsoleManager {
       const consoles = rows.filter((row) => row.project === name);
       return {
         name,
+        gatherErrors: this.gatherErrorsDefault(name),
         projectPath: consoles.find((row) => row.projectPath)?.projectPath,
         consoleCount: consoles.length,
         isLarge: consoles.length > 10,
@@ -125,7 +128,43 @@ export class ConsoleManager {
     const project = this.projectStore?.createManagedProject(name) ?? { name: name.trim(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     if (!project.name) throw new Error("Project name is required");
     this.managedProjects.add(project.name);
-    return project;
+    return { ...project, gatherErrors: this.gatherErrorsDefault(project.name) };
+  }
+
+  private gatherErrorsDefault(project: string): boolean {
+    const name = project.toLowerCase();
+    return this.projectGatherErrors.get(name) ?? (name !== "codexes" && name !== this.settings.codexContexts.projectName.toLowerCase());
+  }
+
+  setProjectGatherErrors(project: string, enabled: boolean): ProjectSummary {
+    if (typeof enabled !== "boolean") throw new Error("enabled must be a boolean");
+    const created = this.createProject(project);
+    this.projectStore?.setGatherErrors(created.name, enabled);
+    this.projectGatherErrors.set(created.name.toLowerCase(), enabled);
+    for (const item of this.itemsForProject(created.name)) {
+      if (item.record.gatherErrorsOverride !== undefined) continue;
+      this.applyGatherErrors(item, enabled);
+    }
+    this.persist();
+    return this.listProjects().find((item) => item.name === created.name)!;
+  }
+
+  setGatherErrors(id: string, enabled: boolean | null): ConsoleRecord {
+    if (enabled !== null && typeof enabled !== "boolean") throw new Error("enabled must be a boolean or null");
+    const item = this.requireConsole(id);
+    this.touchAccess(item);
+    item.record.gatherErrorsOverride = enabled ?? undefined;
+    this.applyGatherErrors(item, enabled ?? this.gatherErrorsDefault(item.record.project));
+    this.persist();
+    return item.record;
+  }
+
+  private applyGatherErrors(item: ManagedConsole, enabled: boolean): void {
+    item.record.gatherErrors = enabled;
+    item.record.updatedAt = new Date().toISOString();
+    if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
+    item.cardRefreshTimer = undefined;
+    this.refreshCards(item);
   }
 
   registerConsole(request: ConsoleRegisterRequest): ConsoleRecord {
@@ -167,6 +206,8 @@ export class ConsoleManager {
       autoStartOnOpen: request.autoStartOnOpen,
       status: startProcess ? "starting" : "idle",
       ansiParserEnabled: request.ansiParserEnabled ?? true,
+      gatherErrors: request.gatherErrors ?? this.gatherErrorsDefault(request.project ?? "Default"),
+      gatherErrorsOverride: request.gatherErrors,
       readCardHashes: (request.readCardHashes ?? []).map(compactCardHash),
       errorCount: 0,
       unseenErrorCount: 0,
@@ -585,6 +626,7 @@ export class ConsoleManager {
       this.deleteManaged(item);
     }
     this.managedProjects.delete(project);
+    this.projectGatherErrors.delete(project.toLowerCase());
     this.projectStore?.removeManagedProject(project);
     this.persist();
   }
@@ -647,7 +689,7 @@ export class ConsoleManager {
   }
 
   private scheduleCardRefresh(item: ManagedConsole): void {
-    if (item.cardRefreshTimer) return;
+    if (!item.record.gatherErrors || item.cardRefreshTimer) return;
     item.cardRefreshTimer = setTimeout(() => {
       item.cardRefreshTimer = undefined;
       if (this.consoles.get(item.record.id) !== item) return;
@@ -657,13 +699,17 @@ export class ConsoleManager {
   }
 
   private refreshCards(item: ManagedConsole): void {
-    const log = this.logs.read(item.record.id).slice(-this.settings.cards.scanTailBytes);
-    const persistent = extractCardsFromText(log, this.settings.cards.maxPerConsole);
-    item.cards = mergeCards(persistent, [], this.settings.cards.maxPerConsole);
+    if (item.record.gatherErrors) {
+      const log = this.logs.read(item.record.id).slice(-this.settings.cards.scanTailBytes);
+      const persistent = extractCardsFromText(log, this.settings.cards.maxPerConsole);
+      item.cards = mergeCards(persistent, [], this.settings.cards.maxPerConsole);
+    } else {
+      item.cards = [];
+    }
     const errorCards = item.cards.filter((card) => card.category === "error");
     item.record.errorCount = errorCards.length;
     item.record.unseenErrorCount = errorCards.filter((card) => !item.readHashes.has(card.hash)).length;
-    if (item.session && item.record.status !== "exited") {
+    if (item.session && item.record.status !== "exited" && item.record.status !== "starting") {
       item.record.status = item.record.unseenErrorCount > 0 ? "ready" : "running";
     }
   }
@@ -752,6 +798,7 @@ export class ConsoleManager {
       noRun: record.noRun,
       autoStartOnOpen: record.autoStartOnOpen,
       ansiParserEnabled: record.ansiParserEnabled,
+      gatherErrors: record.gatherErrorsOverride,
       readCardHashes: record.readCardHashes,
       lastInputAt: record.lastInputAt,
       lastOutputAt: record.lastOutputAt,

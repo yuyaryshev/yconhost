@@ -22,6 +22,7 @@ export interface ConsoleCreateRequest {
   noRun?: boolean;
   autoStartOnOpen?: boolean;
   ansiParserEnabled?: boolean;
+  gatherErrors?: boolean;
   readCardHashes?: string[];
   lastInputAt?: string;
   lastOutputAt?: string;
@@ -58,6 +59,7 @@ export interface ConsoleDefinition {
   background?: string;
   backgroundColor?: ThemeColorPair;
   ansiParserEnabled: boolean;
+  gatherErrors?: boolean;
   readCardHashes?: string[];
 }
 
@@ -76,6 +78,8 @@ export interface ConsoleRecord {
   pid?: number;
   status: ConsoleStatus;
   ansiParserEnabled: boolean;
+  gatherErrors?: boolean;
+  gatherErrorsOverride?: boolean;
   readCardHashes?: string[];
   errorCount: number;
   unseenErrorCount: number;
@@ -105,6 +109,7 @@ export interface ConsoleSessionState extends ConsoleRecord {
 }
 
 export interface ProjectSummary {
+  gatherErrors: boolean;
   isLarge: boolean;
   name: string;
   projectPath?: string;
@@ -115,6 +120,7 @@ export interface ProjectSummary {
 }
 
 export interface ManagedProject {
+  gatherErrors?: boolean;
   name: string;
   createdAt: string;
   updatedAt: string;

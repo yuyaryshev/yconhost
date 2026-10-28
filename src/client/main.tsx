@@ -24,6 +24,8 @@ type ConsoleRecord = {
   errorCount: number;
   unseenErrorCount: number;
   readCardHashes?: string[];
+  gatherErrors?: boolean;
+  gatherErrorsOverride?: boolean;
   updatedAt: string;
   lastStartedAt?: string;
   lastInputAt?: string;
@@ -97,6 +99,7 @@ const terminalThemes: Record<AppTheme, { background: string; foreground: string;
 
 function App() {
   const [consoles, setConsoles] = useState<ConsoleRecord[]>([]);
+  const [projectDefaults, setProjectDefaults] = useState<Record<string, boolean>>({});
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [shellChoice, setShellChoice] = useState("cmd.exe");
@@ -166,6 +169,11 @@ function App() {
     const response = await fetch("/api/consoles");
     const data = (await response.json()) as { consoles: ConsoleRecord[] };
     setConsoles(data.consoles);
+    const projectsResponse = await fetch("/api/projects");
+    if (projectsResponse.ok) {
+      const projectData = await projectsResponse.json() as { projects: Array<{ name: string; gatherErrors?: boolean }> };
+      setProjectDefaults(Object.fromEntries(projectData.projects.map((project) => [project.name, project.gatherErrors !== false])));
+    }
     const names = new Set(["Default", ...data.consoles.map((item) => item.project)]);
     const newNames = [...names].filter((name) => !knownProjects.current.has(name));
     if (names.size > 3 && newNames.length > 0) {
@@ -179,6 +187,17 @@ function App() {
     const response = await fetch("/api/recent-projects");
     const data = (await response.json()) as { projects: RecentProject[] };
     setRecentProjects(data.projects);
+  }
+
+  async function setProjectGatherErrors(project: string, enabled: boolean) {
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/gather-errors`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled })
+    });
+    if (!response.ok) {
+      window.alert((await response.json()).error ?? "Failed to update error gathering");
+      return;
+    }
+    await refresh();
   }
 
   async function refreshSettings() {
@@ -488,6 +507,8 @@ function App() {
                 collapsed={collapsedProjects.has(group.project)}
                 readonly={group.project === "pm2"}
                 canReload={group.consoles.some((item) => item.projectPath)}
+                gatherErrors={projectDefaults[group.project] ?? true}
+                onGatherErrors={(enabled) => setProjectGatherErrors(group.project, enabled)}
                 onToggleCollapsed={() => toggleProjectCollapsed(group.project)}
                 onClose={closeProject}
                 onRestart={() => runProjectAction(group.project, "restart")}
@@ -776,6 +797,8 @@ function ProjectHeader({
   collapsed,
   readonly,
   canReload,
+  gatherErrors,
+  onGatherErrors,
   onToggleCollapsed,
   onClose,
   onRestart,
@@ -790,6 +813,8 @@ function ProjectHeader({
   collapsed: boolean;
   readonly?: boolean;
   canReload?: boolean;
+  gatherErrors: boolean;
+  onGatherErrors: (enabled: boolean) => Promise<void>;
   onToggleCollapsed: () => void;
   onClose: (project: string) => Promise<void>;
   onRestart: () => Promise<void>;
@@ -814,6 +839,10 @@ function ProjectHeader({
         </button>
         {open ? (
           <div className="dropdown-menu project-dropdown">
+            <label className="gather-errors-control project-gather-errors">
+              <input type="checkbox" checked={gatherErrors} onChange={(event) => void onGatherErrors(event.target.checked)} />
+              Gather errors by default
+            </label>
             <button onClick={() => void onRestart()}>Restart all</button>
             <button onClick={() => void onRestartExceptNoRun()}>Restart except no_run</button>
             <button onClick={() => void onStop()}>Stop all</button>
@@ -1033,6 +1062,8 @@ function TerminalPane({
   const [consoleMenuOpen, setConsoleMenuOpen] = useState(false);
   const [nativeBusy, setNativeBusy] = useState(false);
   const [nativeError, setNativeError] = useState("");
+  const [gatherBusy, setGatherBusy] = useState(false);
+  const [gatherError, setGatherError] = useState("");
   const nativeRef = useRef(consoleRecord.nativeCli);
   const fitRef = useRef<FitAddon | null>(null);
   const consoleIdRef = useRef(consoleRecord.id);
@@ -1042,7 +1073,8 @@ function TerminalPane({
   const canRestart = !isReadonly && consoleRecord.status !== "idle" && consoleRecord.status !== "exited";
   const terminalBackground = consoleRecord.backgroundColor?.[theme] ?? terminalThemes[theme].background;
 
-  const unread = useMemo(() => unreadCards(cards, consoleRecord.readCardHashes), [cards, consoleRecord.readCardHashes]);
+  const gathering = consoleRecord.gatherErrors !== false;
+  const unread = useMemo(() => gathering ? unreadCards(cards, consoleRecord.readCardHashes) : [], [cards, consoleRecord.readCardHashes, gathering]);
   const filteredCards = unread.filter((card) => severityRank(card.category) >= severityRank(severityFilter));
   const cardCounts = unread.reduce(
     (acc, card) => {
@@ -1199,7 +1231,21 @@ function TerminalPane({
     fetch(`/api/consoles/${consoleRecord.id}`)
       .then((response) => response.json())
       .then((data: ConsoleSnapshot) => setCards(data.cards ?? []));
-  }, [consoleRecord.id, consoleRecord.errorCount, consoleRecord.unseenErrorCount]);
+  }, [consoleRecord.id, consoleRecord.errorCount, consoleRecord.unseenErrorCount, gathering]);
+
+  async function changeGatherErrors(enabled: boolean | null) {
+    setGatherBusy(true);
+    setGatherError("");
+    try {
+      const response = await fetch(`/api/consoles/${consoleRecord.id}/gather-errors`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Failed to update error gathering");
+      await onChanged();
+    } catch (error) { setGatherError(error instanceof Error ? error.message : String(error)); }
+    finally { setGatherBusy(false); }
+  }
 
   async function markCardsRead() {
     const id = consoleRecord.id;
@@ -1239,6 +1285,11 @@ function TerminalPane({
           </div>
           {!isReadonly ? (
             <div className="toolbar-actions">
+              <label className="gather-errors-control" title={consoleRecord.gatherErrorsOverride === undefined ? "Inherited from project" : "Session override"}>
+                <input type="checkbox" role="switch" checked={gathering} disabled={gatherBusy} onChange={(event) => void changeGatherErrors(event.target.checked)} />
+                Gather errors
+              </label>
+              {consoleRecord.gatherErrorsOverride !== undefined ? <button className="gather-errors-reset" title="Use project default" aria-label="Use project default for Gather errors" disabled={gatherBusy} onClick={() => void changeGatherErrors(null)}>&#8634;</button> : null}
               <button onClick={() => void markCardsRead()}>Mark read</button>
               <button onClick={() => post("signal", { signal: "ctrl+c" })}>Ctrl+C</button>
               <button onClick={() => post(canRestart ? "restart" : "start")}>{canRestart ? "Restart" : "Start"}</button>
@@ -1274,6 +1325,7 @@ function TerminalPane({
             </div>
           ) : null}
         </div>
+        {gatherError ? <div role="alert">{gatherError}</div> : null}
         <div className="cards-toolbar">
           <button className="cards-toggle" onClick={() => setCardsCollapsed((value) => !value)}>
             Cards

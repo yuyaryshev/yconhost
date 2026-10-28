@@ -56,6 +56,13 @@ export class ProjectStore {
     return next;
   }
 
+  setGatherErrors(name: string, enabled: boolean): ManagedProject {
+    const project = this.createManagedProject(name);
+    const updated = { ...project, gatherErrors: enabled, updatedAt: new Date().toISOString() };
+    this.saveManagedProjects(this.listManagedProjects().map((item) => item.name.toLowerCase() === project.name.toLowerCase() ? updated : item));
+    return updated;
+  }
+
   private save(items: RecentProject[]): void {
     fs.writeFileSync(this.file, `${JSON.stringify(items, null, 2)}\n`, "utf8");
   }

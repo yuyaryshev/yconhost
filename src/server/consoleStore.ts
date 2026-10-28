@@ -40,6 +40,7 @@ export class ConsoleStore {
       background: record.background,
       backgroundColor: record.backgroundColor,
       ansiParserEnabled: record.ansiParserEnabled,
+      gatherErrors: record.gatherErrorsOverride,
       readCardHashes: record.readCardHashes
     }));
     fs.writeFileSync(this.file, `${JSON.stringify(definitions, null, 2)}\n`, "utf8");

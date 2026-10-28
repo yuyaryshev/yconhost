@@ -28,6 +28,7 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
         ...manager.listProjects(),
         ...(pm2 ? [{
           name: "pm2",
+          gatherErrors: false,
           isLarge: pm2Consoles.length > 10,
           consoleCount: pm2Consoles.length,
           runningCount: pm2Consoles.filter((row) => row.status === "running").length,
@@ -145,6 +146,7 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
   app.post("/api/consoles/:id/name", route(respond((req) => manager.rename(param(req, "id"), String(req.body.name ?? "")))));
 
   app.post("/api/consoles/:id/read", route(respond((req) => manager.markRead(param(req, "id")))));
+  app.post("/api/consoles/:id/gather-errors", route(respond((req) => manager.setGatherErrors(param(req, "id"), req.body.enabled))));
 
   app.get("/api/consoles/:id/mywins", route(respond((req) => manager.getMywinsEntry(param(req, "id")))));
 
@@ -176,6 +178,7 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
     manager.markProjectRead(param(req, "project"));
     return { ok: true };
   })));
+  app.post("/api/projects/:project/gather-errors", route(respond((req) => manager.setProjectGatherErrors(param(req, "project"), req.body.enabled))));
   app.delete("/api/projects/:project", route(respond((req) => {
     manager.closeProject(param(req, "project"));
     return { ok: true };
@@ -195,6 +198,8 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
           const tools = [
             { name: "list_consoles", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
             { name: "list_projects", description: "List visible yconhost projects, including empty MCP-managed projects and projects inferred from registered consoles.", inputSchema: { type: "object", properties: {} } },
+            { name: "set_console_gather_errors", description: "Enable or disable card/error gathering for a console without affecting its process, output stream or log. enabled=null restores inheritance from its project (codexes defaults to disabled; other projects to enabled).", inputSchema: { type: "object", properties: { id: { type: "string" }, enabled: { type: ["boolean", "null"] } }, required: ["id", "enabled"] } },
+            { name: "set_project_gather_errors", description: "Set the persisted default for card/error gathering in a project. Applies to existing and future sessions that inherit the default; explicit per-session overrides are preserved.", inputSchema: { type: "object", properties: { project: { type: "string" }, enabled: { type: "boolean" } }, required: ["project", "enabled"] } },
             { name: "create_project", description: "Create a named yconhost project managed by MCP/UI. It is persisted in yconhost state and does not require or write mywins.json.", inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
             { name: "import_codex_contexts", description: "Import Codex/ycodex and Claude launch contexts into the codexes yconhost project by default. Consoles are registered as idle colored slots; no agent process is started by import or by selecting a slot. Claude commands and resume arguments are preserved.", inputSchema: { type: "object", properties: { project: { type: "string" }, contextsPath: { type: "string" }, weztermPresetsPath: { type: "string" } } } },
             { name: "get_console_state", description: "Read structured state for a console session, including status, timestamps for last input and last output, and the last few output lines. tailLines defaults to 8.", inputSchema: { type: "object", properties: { id: { type: "string" }, tailLines: { type: "number" } }, required: ["id"] } },
@@ -283,6 +288,14 @@ export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor |
           }
           if (name === "register_console") {
             content(JSON.stringify(manager.registerConsole({ ...args, persistent: args.persistent === true }), null, 2));
+            return;
+          }
+          if (name === "set_console_gather_errors") {
+            content(JSON.stringify(manager.setGatherErrors(String(args.id), args.enabled), null, 2));
+            return;
+          }
+          if (name === "set_project_gather_errors") {
+            content(JSON.stringify(manager.setProjectGatherErrors(String(args.project), args.enabled), null, 2));
             return;
           }
           if (name === "close_console") {
