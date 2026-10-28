@@ -27,3 +27,19 @@ Read-only PM2 rows have no deletion actions. File-deletion actions are not offer
 for MCP-managed or imported agent projects that have no mywins.json source.
 
 This UI change uses existing server endpoints and needs no service restart.
+
+## Verification, 2026-10-28
+
+- All 52 tests and the production build passed. New API regressions cover removal
+  of idle/exited/running Default slots from persisted state and project deletion
+  in both supported source filenames without changing sibling slots or metadata.
+- Chrome on an isolated PM2 server verified Default's idle-row deletion, project
+  cancellation leaving the file untouched, and confirmed idle/running project
+  deletion through list/detail menus. The running process exited, and unrelated
+  source entries remained intact.
+- Desktop and 390x844 screenshots verified menu visibility. Toolbar button styles
+  now apply only to direct controls, so the menu icon retains its full width and
+  menu items do not inherit toolbar borders/padding. No browser warnings/errors.
+- The temporary server was removed and port 4012 released. The live server's PID
+  was unchanged; only rebuilt static UI assets were updated. Reload the browser
+  to activate the new controls.

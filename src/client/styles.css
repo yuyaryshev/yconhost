@@ -453,7 +453,8 @@ h2 {
   font-size: 19px;
 }
 
-.toolbar-actions button,
+.toolbar-actions > button,
+.toolbar-actions > .menu-wrap > button,
 .cards-toolbar button,
 .primary-button,
 .secondary-button {
@@ -463,6 +464,11 @@ h2 {
   background: var(--surface-bg);
   color: var(--text);
   padding: 5px 10px;
+}
+
+.toolbar-actions > .menu-wrap > .project-menu-button {
+  width: 32px;
+  padding: 0;
 }
 
 .cards-toolbar {
