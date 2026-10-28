@@ -108,17 +108,17 @@ function loadMarkdownPresets(filePath: string, defaultCwd?: string): CodexContex
 
 function buildMarkdownPreset(title: string | undefined, background: string | undefined, code: string[], index: number, defaultCwd?: string): CodexContextPreset | undefined {
   if (!title || !background) return undefined;
-  const codexLine = code.findIndex((line) => isCodexCommand(line));
-  if (codexLine < 0) return undefined;
+  const agentLine = code.findIndex((line) => findAgentCommand(line));
+  if (agentLine < 0) return undefined;
 
   const commandParts: string[] = [];
-  for (const line of code.slice(0, codexLine)) {
+  for (const line of code.slice(0, agentLine)) {
     const trimmed = line.trim();
     if (trimmed && isCommandPrefix(trimmed) && !isCodexHomeAssignment(trimmed)) {
       commandParts.push(trimmed);
     }
   }
-  commandParts.push(addBypassSafetyY(useYcodex(code[codexLine].trim())));
+  commandParts.push(normalizeAgentCommand(code[agentLine].trim()));
   const command = commandParts.join(" & ");
 
   return {
@@ -136,20 +136,16 @@ function appendPreset(presets: CodexContextPreset[], seenCommands: Set<string>, 
   presets.push(preset);
 }
 
-function isCodexCommand(line: string): boolean {
-  const lower = line.toLowerCase();
-  return /^\s*ycodex\s/.test(lower) || /&&\s*ycodex\s/.test(lower) || /^\s*codex\s/.test(lower) || /&&\s*codex\s/.test(lower);
+function findAgentCommand(line: string): RegExpExecArray | null {
+  return /(?:^|&&?)\s*(ycodex|codex|claude)(?=\s|$)/i.exec(line);
 }
 
-function useYcodex(command: string): string {
-  const lower = command.toLowerCase();
-  if (/^\s*ycodex\s/.test(lower) || /&&\s*ycodex\s/.test(lower)) return command;
-  return command.replace(/([cC][oO][dD][eE][xX])(\s+)/, "ycodex$2");
-}
-
-function addBypassSafetyY(command: string): string {
-  if (command.toLowerCase().includes("--bypass-safety-y")) return command;
-  return command.replace(/([yY][cC][oO][dD][eE][xX])(\s+)/, "$1 --bypass-safety-y$2");
+function normalizeAgentCommand(command: string): string {
+  const match = findAgentCommand(command);
+  if (!match || match[1].toLowerCase() === "claude") return command;
+  const start = match.index + match[0].length - match[1].length;
+  const launcher = command.toLowerCase().includes("--bypass-safety-y") ? "ycodex" : "ycodex --bypass-safety-y";
+  return command.slice(0, start) + launcher + command.slice(start + match[1].length);
 }
 
 function isCommandPrefix(line: string): boolean {

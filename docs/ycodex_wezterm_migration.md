@@ -240,6 +240,14 @@ For manual HTTP checks, start a temporary instance on a different port and data 
 - Legacy temp_* slots are removed from persisted console registrations during this deployment, across all projects. This cleanup does not change project mywins.json files.
 - Codex launch verification exposed browser terminal device/color/focus reports being injected into the Windows command input. These generated reports are now suppressed for Windows native shells, while typed text, paste and navigation keys continue to pass through. Browser terminal dimensions are reapplied when lastStartedAt changes so Restart retains a correctly framed TUI.
 
+## Claude Contexts, 2026-10-28
+
+- The same importer now accepts `claude` alongside `codex` and `ycodex`; all belong to `codexes`. Previously Claude sections were silently skipped, unlike WezTerm.
+- Detection uses the executable in the code block, not the heading: a section such as `khb_process` can therefore be a Claude slot too.
+- Each section uses its first agent command. Claude arguments (including `--resume`), working directory and color are preserved; Codex-specific executable/flag normalization never modifies Claude commands.
+- Existing HTTP and MCP import names remain unchanged. Startup sync and explicit imports create persistent idle slots, without starting agents. Reimport updates slots by project/name without duplicating them or restarting running consoles.
+- Large-project navigation still applies: search finds never-started slots; Show all reveals the complete list.
+
 ### Verification Results
 
 - Removed 194 legacy temp_* registrations: 186 from odbp_bundle and eight from odbp. The pre-cleanup JSON backup remains under the ignored data directory.

@@ -369,7 +369,7 @@ describe("HTTP API", () => {
     }
   });
 
-  it("imports Codex contexts as idle colored slots and starts only on explicit start", async () => {
+  it("imports Codex and Claude contexts as idle colored slots and starts only on explicit start", async () => {
     fs.writeFileSync(
       path.join(dir, "yy_wezterm_codexes.lua"),
       "local built_in_presets = {\n" +
@@ -379,7 +379,8 @@ describe("HTTP API", () => {
     );
     fs.writeFileSync(
       path.join(dir, "Codex contexts.md"),
-      "# Dynamic context\nColor: `#320000`\n\n```cmd\nset \"CODEX_HOME=C:\\Users\\Administrator\\.codex\"\ncd /d D:\\work\\dynamic && codex resume dynamic-thread --dangerously-bypass-approvals-and-sandbox\n```\n",
+      "# Dynamic context\nColor: `#320000`\n\n```cmd\nset \"CODEX_HOME=C:\\Users\\Administrator\\.codex\"\ncd /d D:\\work\\dynamic && codex resume dynamic-thread --dangerously-bypass-approvals-and-sandbox\n```\n" +
+        "# khb_microservices_claude\nColor: `#003200`\n\n```cmd\ncls && cd /d D:\\work\\microservices && claude --resume claude-thread --dangerously-skip-permissions\n```\n",
       "utf8"
     );
     const settings = testSettings(dir);
@@ -387,11 +388,11 @@ describe("HTTP API", () => {
     const managedManager = new ConsoleManager(settings, new LogStore(settings), managedFactory, undefined, new ProjectStore(settings));
     const managedApp = createApp(managedManager, { pm2: false });
 
-    expect(managedManager.list("codexes")).toHaveLength(2);
+    expect(managedManager.list("codexes")).toHaveLength(3);
     expect(managedFactory.sessions).toHaveLength(0);
     const imported = await request(managedApp).post("/api/codex-contexts/import").send({}).expect(200);
-    expect(imported.body).toMatchObject({ project: "codexes", imported: 2 });
-    expect(imported.body.consoles.map((item: { name: string }) => item.name)).toEqual(["stable", "Dynamic context"]);
+    expect(imported.body).toMatchObject({ project: "codexes", imported: 3 });
+    expect(imported.body.consoles.map((item: { name: string }) => item.name)).toEqual(["stable", "Dynamic context", "khb_microservices_claude"]);
     expect(imported.body.consoles[0]).toMatchObject({ status: "idle", noRun: true, persistent: true, background: "#000032" });
     expect(imported.body.consoles[0].autoStartOnOpen).toBeUndefined();
     expect(imported.body.consoles[1]).toMatchObject({ status: "idle", noRun: true, background: "#320000" });
@@ -399,6 +400,10 @@ describe("HTTP API", () => {
     expect(imported.body.consoles[1].command).toContain("ycodex --bypass-safety-y resume dynamic-thread");
     expect(imported.body.consoles[1].command).not.toContain("CODEX_HOME=");
     expect(imported.body.consoles[1].command).not.toContain("YCODEX_HOME=");
+    expect(imported.body.consoles[2]).toMatchObject({
+      status: "idle", noRun: true, persistent: true, background: "#003200",
+      command: "cls && cd /d D:\\work\\microservices && claude --resume claude-thread --dangerously-skip-permissions"
+    });
     expect(managedFactory.sessions).toHaveLength(0);
 
     const started = await request(managedApp).post(`/api/consoles/${imported.body.consoles[0].id}/start`).send({}).expect(200);
@@ -409,12 +414,14 @@ describe("HTTP API", () => {
 
     const tools = await request(managedApp).post("/mcp").send({ method: "tools/list" }).expect(200);
     expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toContain("import_codex_contexts");
+    expect(tools.body.tools.find((tool: { name: string }) => tool.name === "import_codex_contexts").description).toContain("Claude");
 
     const mcpImport = await request(managedApp)
       .post("/mcp")
       .send({ method: "tools/call", params: { name: "import_codex_contexts", arguments: { project: "codexes" } } })
       .expect(200);
-    expect(JSON.parse(mcpImport.body.content[0].text)).toMatchObject({ project: "codexes", imported: 2 });
+    expect(JSON.parse(mcpImport.body.content[0].text)).toMatchObject({ project: "codexes", imported: 3 });
+    expect(managedManager.list("codexes").map((item) => item.id)).toEqual(imported.body.consoles.map((item: { id: string }) => item.id));
     expect(managedManager.list("codexes")[0].lastStartedAt).toBe(launchedAt);
     expect(managedFactory.sessions).toHaveLength(1);
   });
