@@ -296,9 +296,12 @@ function App() {
 
   async function closeConsole(id: string) {
     const response = await fetch(`/api/consoles/${id}`, { method: "DELETE" });
-    if (response.ok) {
-      await refresh();
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      window.alert(body.error ?? "Failed to close console");
+      return;
     }
+    await refresh();
   }
 
   async function markConsoleRead(id: string) {
@@ -380,7 +383,9 @@ function App() {
   }
 
   async function deleteConsoleFromMywins(id: string) {
-    if (!window.confirm("Delete this console from mywins.json?")) return;
+    const record = consoles.find((item) => item.id === id);
+    if (!record?.projectPath) return;
+    if (!window.confirm(`Delete "${record.name}" from the project's mywins.json?\nProject: ${record.projectPath}\nThe console will be removed and its running process, if any, stopped.`)) return;
     const response = await fetch(`/api/consoles/${id}/mywins`, { method: "DELETE" });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
@@ -520,7 +525,7 @@ function App() {
                 onAddConsole={() => openAddMywins(group.project)}
               />
               {!collapsedProjects.has(group.project) ? (
-                <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} />
+                <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} onEditConfig={openEditMywins} onDeleteConfig={deleteConsoleFromMywins} />
               ) : null}
             </section>
           ))}
@@ -858,12 +863,14 @@ function ProjectHeader({
   );
 }
 
-function ProjectConsoleList({ consoles, selectedId, theme, onSelect, onClose }: {
+function ProjectConsoleList({ consoles, selectedId, theme, onSelect, onClose, onEditConfig, onDeleteConfig }: {
   consoles: ConsoleRecord[];
   selectedId?: string;
   theme: AppTheme;
   onSelect: (id: string) => void;
   onClose: (id: string) => Promise<void>;
+  onEditConfig: (id: string) => void;
+  onDeleteConfig: (id: string) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -873,7 +880,7 @@ function ProjectConsoleList({ consoles, selectedId, theme, onSelect, onClose }: 
     <div className="project-consoles" data-large={isLarge}>
       {isLarge ? <input className="project-console-search" type="search" aria-label="Поиск консолей" placeholder="Поиск консолей" value={query} onChange={(event) => setQuery(event.target.value)} /> : null}
       {visible.length === 0 ? <div className="empty-project">{query ? "Ничего не найдено" : "Нет недавних запусков"}</div> : null}
-      {visible.map((item) => <ConsoleRow key={item.id} item={item} active={item.id === selectedId} theme={theme} onSelect={() => onSelect(item.id)} onClose={onClose} />)}
+      {visible.map((item) => <ConsoleRow key={item.id} item={item} active={item.id === selectedId} theme={theme} onSelect={() => onSelect(item.id)} onClose={onClose} onEditConfig={() => onEditConfig(item.id)} onDeleteConfig={() => onDeleteConfig(item.id)} />)}
       {isLarge && !showAll ? <button className="project-show-all" onClick={() => { setQuery(""); setShowAll(true); }}>Показать все</button> : null}
     </div>
   );
@@ -902,40 +909,71 @@ function RecentProjectRow({ project, onSelect, onClose }: { project: RecentProje
   );
 }
 
+function ConsoleActionsMenu({ consoleRecord, onEditConfig, onDelete }: {
+  consoleRecord: ConsoleRecord;
+  onEditConfig: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="menu-wrap" onClick={(event) => event.stopPropagation()}>
+      <button className="project-menu-button" title="Console actions" aria-label={`Console actions for ${consoleRecord.name}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <MenuIcon />
+      </button>
+      {open ? (
+        <div className="dropdown-menu detail-dropdown">
+          {consoleRecord.projectPath ? <button onClick={() => { setOpen(false); onEditConfig(); }}>Settings...</button> : null}
+          <button onClick={() => { setOpen(false); void onDelete(); }}>
+            {consoleRecord.projectPath ? "Delete from mywins.json" : "Delete console"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ConsoleRow({
   item,
   active,
   theme,
   onSelect,
-  onClose
+  onClose,
+  onEditConfig,
+  onDeleteConfig
 }: {
   item: ConsoleRecord;
   active: boolean;
   theme: AppTheme;
   onSelect: () => void;
   onClose: (id: string) => Promise<void>;
+  onEditConfig: () => void;
+  onDeleteConfig: () => Promise<void>;
 }) {
   const showErrorBadge = item.status !== "idle" && item.status !== "exited" && item.unseenErrorCount > 0;
-  const canClose = !item.readonly && item.status !== "idle" && item.status !== "exited";
+  const isDefault = item.project === "Default";
+  const canClose = !item.readonly && (isDefault || (item.status !== "idle" && item.status !== "exited"));
   const labelColor = item.backgroundColor?.[theme] ?? item.background;
   return (
     <div className={`console-row ${active ? "active" : ""}`} style={{ "--console-label-bg": labelColor } as React.CSSProperties} onClick={onSelect}>
       <span className={`status ${item.status}`}>{consoleStatusGlyph(item.status)}</span>
       <span className="console-title">{item.name}</span>
       {showErrorBadge ? <span className="badge">{item.unseenErrorCount}</span> : null}
-      {canClose ? (
-        <button
-          className="row-close-button"
-          title="Close console"
-          aria-label={`Close ${item.name}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            void onClose(item.id);
-          }}
-        >
-          <CloseIcon />
-        </button>
-      ) : null}
+      <div className="console-row-actions">
+        {canClose ? (
+          <button
+            className="row-close-button"
+            title={isDefault ? "Delete console" : "Close console"}
+            aria-label={`${isDefault ? "Delete" : "Close"} ${item.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onClose(item.id);
+            }}
+          >
+            <CloseIcon />
+          </button>
+        ) : null}
+        {!item.readonly && item.projectPath ? <ConsoleActionsMenu consoleRecord={item} onEditConfig={onEditConfig} onDelete={onDeleteConfig} /> : null}
+      </div>
     </div>
   );
 }
@@ -1059,7 +1097,6 @@ function TerminalPane({
   const [cardsCollapsed, setCardsCollapsed] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("info");
   const [atTerminal, setAtTerminal] = useState(true);
-  const [consoleMenuOpen, setConsoleMenuOpen] = useState(false);
   const [nativeBusy, setNativeBusy] = useState(false);
   const [nativeError, setNativeError] = useState("");
   const [gatherBusy, setGatherBusy] = useState(false);
@@ -1294,34 +1331,8 @@ function TerminalPane({
               <button onClick={() => post("signal", { signal: "ctrl+c" })}>Ctrl+C</button>
               <button onClick={() => post(canRestart ? "restart" : "start")}>{canRestart ? "Restart" : "Start"}</button>
               {consoleRecord.nativeCli && canRestart ? <button disabled={nativeBusy} onClick={() => void toggleNative()}>{consoleRecord.nativeCli.visible ? "Скрыть native cli" : "Показать native cli"}</button> : null}
-              {consoleRecord.status !== "idle" && consoleRecord.status !== "exited" ? <button onClick={onClose}>Close</button> : null}
-              {consoleRecord.projectPath ? (
-                <div className="menu-wrap">
-                  <button className="project-menu-button" title="Console actions" aria-label="Console actions" onClick={() => setConsoleMenuOpen((value) => !value)}>
-                    <MenuIcon />
-                  </button>
-                  {consoleMenuOpen ? (
-                    <div className="dropdown-menu detail-dropdown">
-                      <button
-                        onClick={() => {
-                          setConsoleMenuOpen(false);
-                          onEditConfig();
-                        }}
-                      >
-                        Settings...
-                      </button>
-                      <button
-                        onClick={() => {
-                          setConsoleMenuOpen(false);
-                          void onDeleteConfig();
-                        }}
-                      >
-                        Delete from mywins.json
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              {consoleRecord.project === "Default" || canRestart ? <button onClick={onClose}>{consoleRecord.project === "Default" && !canRestart ? "Delete" : "Close"}</button> : null}
+              {consoleRecord.projectPath || consoleRecord.project === "Default" ? <ConsoleActionsMenu key={consoleRecord.id} consoleRecord={consoleRecord} onEditConfig={onEditConfig} onDelete={consoleRecord.projectPath ? onDeleteConfig : onClose} /> : null}
             </div>
           ) : null}
         </div>

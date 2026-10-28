@@ -155,6 +155,60 @@ describe("HTTP API", () => {
     expect(updated.body.cards.filter((card: { read: boolean }) => !card.read).map((card: { title: string }) => card.title)).toEqual(["Error: second failure"]);
   });
 
+  it("removes idle, exited and running Default slots from persistent state", async () => {
+    const settings = testSettings(dir);
+    const store = new ConsoleStore(settings);
+    const terminalFactory = new FakeTerminalFactory();
+    const stored = new ConsoleManager(settings, new LogStore(settings), terminalFactory, store);
+    const storedApp = createApp(stored, { pm2: false });
+    let restored: ConsoleManager | undefined;
+    try {
+      const idle = stored.registerConsole({ project: "Default", name: "idle", persistent: true });
+      const exited = stored.create({ name: "exited", project: "Default" });
+      terminalFactory.sessions[0].emit("exit", 0);
+      const running = stored.create({ name: "running", project: "Default" });
+      const keep = stored.registerConsole({ project: "Default", name: "keep", persistent: true });
+      expect([idle.status, exited.status, running.status]).toEqual(["idle", "exited", "running"]);
+      for (const record of [idle, exited, running]) {
+        await request(storedApp).delete(`/api/consoles/${record.id}`).expect(200);
+        await request(storedApp).get(`/api/consoles/${record.id}`).expect(404);
+        expect(store.load().some((definition) => definition.id === record.id)).toBe(false);
+      }
+      expect(terminalFactory.sessions[1].killed).toBe(true);
+      stored.dispose();
+      restored = new ConsoleManager(settings, new LogStore(settings), new FakeTerminalFactory(), store);
+      expect(restored.list().map((record) => record.id)).toEqual([keep.id]);
+    } finally { stored.dispose(); restored?.dispose(); }
+  });
+
+  it.each([
+    ["mywins.json", false], ["mywins.json", true],
+    ["my_wins.json", false], ["my_wins.json", true]
+  ] as const)("deletes only the requested project entry from %s (running=%s)", async (fileName, running) => {
+    const configPath = path.join(dir, fileName);
+    const keepConfig = { cmd: "echo keep", background: "STD_GREEN" };
+    fs.writeFileSync(configPath, JSON.stringify({ custom: { retain: true }, wins: {
+      remove: { cmd: "echo remove", no_run: !running }, keep: keepConfig,
+      idle: { cmd: "echo idle", no_run: true }
+    } }));
+    const created = await request(app).post("/api/batch").send({ projectPath: dir }).expect(200);
+    const [target, keep, idle] = created.body;
+    const sessionsBefore = factory.sessions.length;
+    await request(app).delete(`/api/consoles/${target.id}/mywins`).expect(200);
+    const document = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(document.custom).toEqual({ retain: true });
+    expect(Object.keys(document.wins)).toEqual(["keep", "idle"]);
+    expect(document.wins.keep).toEqual(keepConfig);
+    expect(manager.list(path.basename(dir)).map((record) => record.id)).toEqual([keep.id, idle.id]);
+    expect(manager.get(keep.id)).toMatchObject({ status: "running", pid: keep.pid });
+    expect(manager.get(idle.id).status).toBe("idle");
+    expect(factory.sessions).toHaveLength(sessionsBefore);
+    if (running) expect(factory.sessions[0].killed).toBe(true);
+    await request(app).get(`/api/consoles/${target.id}`).expect(404);
+    const reloaded = await request(app).post(`/api/projects/${path.basename(dir)}/reload`).expect(200);
+    expect(reloaded.body.map((record: { name: string }) => record.name)).toEqual(["keep", "idle"]);
+  });
+
   it("persists read cards across restart and flushes pending project-wide acknowledgements", async () => {
     const settings = testSettings(dir);
     const storedFactory = new FakeTerminalFactory();

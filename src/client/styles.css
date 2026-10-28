@@ -284,6 +284,13 @@ h2 {
   white-space: nowrap;
 }
 
+.console-row-actions {
+  grid-column: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .row-close-button {
   display: inline-flex;
   align-items: center;
