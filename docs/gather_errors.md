@@ -36,3 +36,24 @@ and existing Mark read acknowledgements.
 These controls never start, stop or restart processes. Applying the server upgrade
 does require a coordinated service restart; its existing no-autostart policy stays
 unchanged.
+
+## Verification and Deployment, 2026-10-28
+
+- All 47 tests and the production build passed. Coverage includes disabled-parser
+  scheduling, pending extraction cancellation, retained input/output/logs,
+  inherited defaults, explicit overrides, restart/reimport and HTTP/MCP validation.
+- An isolated PM2 instance on port 4012 verified real diagnostic cards disappearing
+  and counters reaching zero without a shell PID change. Chrome verified the switch
+  before Mark read, project defaults, reset-to-inheritance, dark/light themes and
+  non-overlapping controls at 390x844. No browser warnings/errors were reported.
+- After user approval, the live service was stopped and started through PM2.
+  State backups were saved under data/before-gather-errors-1793186232869. Existing
+  in-memory Mark read keys were compacted and merged after shutdown to accommodate
+  the older backend's persistence omission. All previous slots/acknowledgements
+  survived; startup sync added one newly available context.
+- The live API verified 82 codexes slots with gathering disabled and zero error
+  counters, the normal Default project enabled, and no auto-started processes.
+  Chrome verified khb_microservices_claude with the switch off and zero cards.
+- The verification PM2 process was removed and the final PM2 process list saved.
+  For coordinated Windows upgrades, use explicit stop/start and confirm the port
+  is free before starting; verify that its listening PID matches PM2 afterward.

@@ -39,3 +39,8 @@ records' `readCardHashes` through the API **before** stopping it, then merge tho
 keys into the matching saved definitions **after** shutdown and before starting
 the new server. The old shutdown code would otherwise discard in-memory read
 state. Keep a backup of the definition file and do not clear console logs.
+
+2026-10-28: the coordinated Gather errors deployment activated these backend
+fixes. Live acknowledgements were preserved using the procedure above, and the
+updated service verified them after restart. New acknowledgements now persist
+normally without that upgrade-only migration step.
