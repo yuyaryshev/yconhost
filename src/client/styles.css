@@ -517,10 +517,6 @@ h2 {
   cursor: pointer;
 }
 
-.cards-toolbar .cards-toggle {
-  font-weight: 700;
-}
-
 .cards-toolbar .error {
   color: var(--danger);
 }

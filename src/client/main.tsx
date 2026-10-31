@@ -1122,8 +1122,9 @@ function TerminalPane({
   const socketRef = useRef<WebSocket | null>(null);
   const loadedCardsConsole = useRef<string | null>(null);
   const [cards, setCards] = useState<ExtractedCard[]>([]);
-  const [cardsCollapsed, setCardsCollapsed] = useState(false);
-  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("info");
+  const [cardsView, setCardsView] = useState<SeverityFilter | "hide">("info");
+  const cardsCollapsed = cardsView === "hide";
+  const severityFilter = cardsCollapsed ? "info" : cardsView;
   const [atTerminal, setAtTerminal] = useState(true);
   const [nativeBusy, setNativeBusy] = useState(false);
   const [nativeError, setNativeError] = useState("");
@@ -1356,17 +1357,17 @@ function TerminalPane({
   return (
     <div className="terminal-layout" style={{ "--terminal-bg": terminalBackground } as React.CSSProperties}>
       {toolbarHost ? createPortal(<div className="toolbar">
-        <div className="cards-toolbar">
-          <button className="cards-toggle" aria-expanded={!cardsCollapsed} onClick={() => setCardsCollapsed((value) => !value)}>
-            Cards
+        <div className="cards-toolbar" role="group" aria-label="Card filters">
+          <button className={cardsView === "hide" ? "active-filter" : ""} aria-pressed={cardsView === "hide"} onClick={() => setCardsView("hide")}>
+            Hide
           </button>
-          <button className={severityFilter === "error" ? "active-filter error" : "error"} onClick={() => setSeverityFilter("error")}>
+          <button className={cardsView === "error" ? "active-filter error" : "error"} aria-pressed={cardsView === "error"} onClick={() => setCardsView("error")}>
             Errors {cardCounts.error}
           </button>
-          <button className={severityFilter === "warning" ? "active-filter warning" : "warning"} onClick={() => setSeverityFilter("warning")}>
+          <button className={cardsView === "warning" ? "active-filter warning" : "warning"} aria-pressed={cardsView === "warning"} onClick={() => setCardsView("warning")}>
             Warnings {cardCounts.warning}
           </button>
-          <button className={severityFilter === "info" ? "active-filter info" : "info"} onClick={() => setSeverityFilter("info")}>
+          <button className={cardsView === "info" ? "active-filter info" : "info"} aria-pressed={cardsView === "info"} onClick={() => setCardsView("info")}>
             Info {cardCounts.info}
           </button>
         </div>

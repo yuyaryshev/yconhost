@@ -76,3 +76,12 @@ eight current recent slots to 82 and collapsed back without reloading; the rever
 button remained last in the list. Desktop and 390x844 views retained the shared
 scroll layout without page or horizontal overflow. No browser warnings/errors,
 service restarts or console commands; only static frontend assets were rebuilt.
+
+## Card View Selector
+
+The former Cards disclosure button is now Hide, one of four mutually exclusive
+toggle buttons in the Card filters group: Hide, Errors, Warnings and Info.
+Hide hides the card feed without clearing it or changing error gathering.
+Selecting a severity reveals the feed again with the existing threshold behavior
+(Errors only errors, Warnings warnings/errors, Info all). Only the selected mode
+is highlighted and aria-pressed, including when Hide is selected.
