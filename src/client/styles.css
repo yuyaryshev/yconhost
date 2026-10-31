@@ -60,6 +60,7 @@ select {
 }
 
 .app-shell {
+  --console-search-height: 24px;
   /* Keep terminal and menu layers below portaled modal surfaces. */
   isolation: isolate;
   display: grid;
@@ -602,11 +603,33 @@ h2 {
   width: calc(100% - 16px);
   margin: 6px 8px;
   min-width: 0;
+  height: var(--console-search-height);
 }
 
 .project-show-all {
   width: calc(100% - 16px);
   margin: 6px 8px 10px;
+}
+
+.app-shell[data-touch-mode="false"] .project-group {
+  margin-bottom: 7px;
+}
+
+.app-shell[data-touch-mode="false"] .project-header {
+  height: 21px;
+  padding: 0 6px;
+}
+
+.app-shell[data-touch-mode="false"] .console-row {
+  height: var(--console-search-height);
+  min-height: var(--console-search-height);
+  padding-block: 0;
+}
+
+.app-shell[data-touch-mode="false"] .sidebar .project-menu-button,
+.app-shell[data-touch-mode="false"] .sidebar .row-close-button {
+  width: 20px;
+  height: 20px;
 }
 
 .disabled-console-panel {

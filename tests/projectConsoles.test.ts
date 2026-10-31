@@ -15,3 +15,12 @@ it("shows the last nine launches and searches all slots, including never started
   expect(selectProjectConsoles(consoles, "", true)).toEqual(consoles);
   expect(selectProjectConsoles(consoles.slice(0, 10), "", false)).toEqual(consoles.slice(0, 10));
 });
+
+it("returns to the same compact recent list after expanding all slots", () => {
+  const originalOrder = consoles.map((item) => item.name);
+  const compact = selectProjectConsoles(consoles, "", false);
+  expect(selectProjectConsoles(consoles, "", true)).toHaveLength(13);
+  expect(selectProjectConsoles(consoles, "", false)).toEqual(compact);
+  expect(selectProjectConsoles(consoles, "", false)).toHaveLength(9);
+  expect(consoles.map((item) => item.name)).toEqual(originalOrder);
+});

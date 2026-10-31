@@ -111,6 +111,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [theme, setTheme] = useState<AppTheme>(() => (window.localStorage.getItem("yconhost-theme") === "light" ? "light" : "dark"));
+  const [touchMode, setTouchMode] = useState(() => window.localStorage.getItem("yconhost-touch-mode") !== "false");
   const [debugMode, setDebugMode] = useState(false);
   const [settings, setSettings] = useState<AppSettings>();
   const [serverAlive, setServerAlive] = useState(false);
@@ -131,6 +132,10 @@ function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("yconhost-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem("yconhost-touch-mode", String(touchMode));
+  }, [touchMode]);
 
   useEffect(() => {
     let disposed = false;
@@ -429,7 +434,7 @@ function App() {
   };
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-touch-mode={touchMode}>
       <header className="app-header">
         <div className="sidebar-header">
           <h1>
@@ -547,6 +552,8 @@ function App() {
                 scrollRef={scrollRef}
                 debugMode={debugMode}
                 theme={theme}
+                touchMode={touchMode}
+                onTouchModeChange={setTouchMode}
                 onChanged={refresh}
                 onRename={renameConsole}
                 onClose={() => closeConsole(selected.id)}
@@ -893,7 +900,7 @@ function ProjectConsoleList({ consoles, selectedId, theme, onSelect, onClose, on
       {isLarge ? <input className="project-console-search" type="search" aria-label="Поиск консолей" placeholder="Поиск консолей" value={query} onChange={(event) => setQuery(event.target.value)} /> : null}
       {visible.length === 0 ? <div className="empty-project">{query ? "Ничего не найдено" : "Нет недавних запусков"}</div> : null}
       {visible.map((item) => <ConsoleRow key={item.id} item={item} active={item.id === selectedId} theme={theme} onSelect={() => onSelect(item.id)} onClose={onClose} onEditConfig={() => onEditConfig(item.id)} onDeleteConfig={() => onDeleteConfig(item.id)} />)}
-      {isLarge && !showAll ? <button className="project-show-all" onClick={() => { setQuery(""); setShowAll(true); }}>Показать все</button> : null}
+      {isLarge ? <button className="project-show-all" aria-expanded={showAll} onClick={() => { setQuery(""); setShowAll((value) => !value); }}>{showAll ? "Свернуть компактно" : "Показать все"}</button> : null}
     </div>
   );
 }
@@ -1086,6 +1093,8 @@ function TerminalPane({
   scrollRef,
   debugMode,
   theme,
+  touchMode,
+  onTouchModeChange,
   onChanged,
   onRename,
   onClose,
@@ -1098,6 +1107,8 @@ function TerminalPane({
   scrollRef: React.RefObject<HTMLDivElement | null>;
   debugMode: boolean;
   theme: AppTheme;
+  touchMode: boolean;
+  onTouchModeChange: (enabled: boolean) => void;
   onChanged: () => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
   onClose: () => Promise<void>;
@@ -1367,8 +1378,12 @@ function TerminalPane({
               {consoleRecord.pid ? <span className="meta-pill">PID {consoleRecord.pid}</span> : null}
             </p>
           </div>
-          {!isReadonly ? (
-            <div className="toolbar-actions">
+          <div className="toolbar-actions">
+            <label className="gather-errors-control">
+              <input type="checkbox" checked={touchMode} onChange={(event) => onTouchModeChange(event.target.checked)} />
+              Touch mode
+            </label>
+            {!isReadonly ? <>
               <label className="gather-errors-control" title={consoleRecord.gatherErrorsOverride === undefined ? "Inherited from project" : "Session override"}>
                 <input type="checkbox" role="switch" checked={gathering} disabled={gatherBusy} onChange={(event) => void changeGatherErrors(event.target.checked)} />
                 Gather errors
@@ -1380,8 +1395,8 @@ function TerminalPane({
               {consoleRecord.nativeCli && canRestart ? <button disabled={nativeBusy} onClick={() => void toggleNative()}>{consoleRecord.nativeCli.visible ? "Скрыть native cli" : "Показать native cli"}</button> : null}
               {consoleRecord.project === "Default" || canRestart ? <button onClick={onClose}>{consoleRecord.project === "Default" && !canRestart ? "Delete" : "Close"}</button> : null}
               {consoleRecord.projectPath || consoleRecord.project === "Default" ? <ConsoleActionsMenu key={consoleRecord.id} consoleRecord={consoleRecord} onEditConfig={onEditConfig} onDelete={consoleRecord.projectPath ? onDeleteConfig : onClose} /> : null}
-            </div>
-          ) : null}
+            </> : null}
+          </div>
         </div>
         {gatherError ? <div role="alert">{gatherError}</div> : null}
       </div>, toolbarHost) : null}

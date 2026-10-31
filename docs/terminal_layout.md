@@ -51,3 +51,19 @@ command surface as the terminal destination too.
   errors. Test-tab input/resize forwarding was disabled; no commands were sent,
   settings saved, or service/console processes restarted. Reload the browser/PWA
   to activate the rebuilt UI.
+
+## Sidebar Density and List Expansion
+
+Touch mode is a browser-wide preference, enabled by default and stored under
+yconhost-touch-mode in localStorage. Its checkbox sits immediately before Gather
+errors; it also remains available for read-only PM2 views. It is not a console or
+server setting and never changes process state.
+
+Disabling Touch mode halves project headers from 42px to 21px (and halves the
+inter-project gap). Console rows become 24px high, matching the search field;
+sidebar action buttons shrink to fit. Enabling it restores the existing roomy
+spacing. Console output, cards, dialogs and toolbar sizing are unchanged.
+
+Large-project lists have a reversible end-of-list button: Show all switches to
+Свернуть компактно while expanded. Collapsing clears the search and restores the
+nine most recent launches; project collapse still resets expansion as before.
