@@ -67,3 +67,12 @@ spacing. Console output, cards, dialogs and toolbar sizing are unchanged.
 Large-project lists have a reversible end-of-list button: Show all switches to
 Свернуть компактно while expanded. Collapsing clears the search and restores the
 nine most recent launches; project collapse still resets expansion as before.
+
+Verification: all 53 tests and the production build passed. Chrome verified
+Touch mode defaults on, false survives reload, and enabling restores 42px headers
+and 40px rows. Compact measurements were 21px headers and 24px rows/search fields,
+with full-width menu icons inside 20px buttons. The large list expanded from its
+eight current recent slots to 82 and collapsed back without reloading; the reverse
+button remained last in the list. Desktop and 390x844 views retained the shared
+scroll layout without page or horizontal overflow. No browser warnings/errors,
+service restarts or console commands; only static frontend assets were rebuilt.
