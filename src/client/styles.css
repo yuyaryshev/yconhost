@@ -534,7 +534,9 @@ h2 {
 .terminal-host {
   height: max(620px, calc((100vh - 74px) * 0.66));
   min-height: 0;
-  padding: 10px;
+  /* FitAddon measures this box, so keep horizontal spacing outside it. */
+  padding: 10px 0;
+  margin-inline: 10px;
   background: var(--terminal-bg);
 }
 
