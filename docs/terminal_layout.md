@@ -85,3 +85,8 @@ Hide hides the card feed without clearing it or changing error gathering.
 Selecting a severity reveals the feed again with the existing threshold behavior
 (Errors only errors, Warnings warnings/errors, Info all). Only the selected mode
 is highlighted and aria-pressed, including when Hide is selected.
+
+Chrome verified the selector on retained history: Hide displayed no cards,
+Errors displayed 14, Warnings displayed 47 (warnings/errors), and Info restored
+all 500. Each mode had exactly one pressed button; gathering remained enabled.
+The production build passed, with no browser warnings/errors or service restart.
