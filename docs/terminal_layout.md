@@ -34,3 +34,20 @@ the same single scroll container. Modal dialogs remain outside the shell's
 stacking context. Terminal wheel handling, initial console selection and the
 Scroll to terminal button all target the shared body; stopped consoles use their
 command surface as the terminal destination too.
+
+### Verification, 2026-10-31
+
+- Captured the physical displays and followed the common-header prototype shown
+  in the image editor. Chrome checked 1920x1014, 1280x800 and 390x844 viewports,
+  both themes and the Preferences modal above the new header/body.
+- With 500 retained cards, only console-scroll was vertically scrollable; the
+  document's scrollHeight equalled the viewport height and horizontal overflow
+  was zero. Scrolling 200px moved both columns by exactly 200px while header top
+  remained zero. Filtering/collapsing cards and jumping to the terminal worked.
+- With all 82 codexes slots expanded and a running terminal, the shared body grew
+  to fit the sidebar. A 240px wheel event over the terminal moved both columns
+  240px, with no outer-page or nested sidebar scrollbar.
+- All 52 tests and the production build passed. Chrome reported no warnings or
+  errors. Test-tab input/resize forwarding was disabled; no commands were sent,
+  settings saved, or service/console processes restarted. Reload the browser/PWA
+  to activate the rebuilt UI.

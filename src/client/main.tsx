@@ -512,52 +512,52 @@ function App() {
       <div className="console-scroll" ref={scrollRef}>
         <div className="app-body">
           <aside className="sidebar">
-        <div className="project-list">
-          {projects.map((group) => (
-            <section key={group.project} className="project-group">
-              <ProjectHeader
-                project={group.project}
-                collapsed={collapsedProjects.has(group.project)}
-                readonly={group.project === "pm2"}
-                canReload={group.consoles.some((item) => item.projectPath)}
-                gatherErrors={projectDefaults[group.project] ?? true}
-                onGatherErrors={(enabled) => setProjectGatherErrors(group.project, enabled)}
-                onToggleCollapsed={() => toggleProjectCollapsed(group.project)}
-                onClose={closeProject}
-                onRestart={() => runProjectAction(group.project, "restart")}
-                onRestartExceptNoRun={() => runProjectAction(group.project, "restart-except-no-run")}
-                onStop={() => runProjectAction(group.project, "stop")}
-                onStart={() => runProjectAction(group.project, "start")}
-                onReload={() => runProjectAction(group.project, "reload")}
-                onMarkRead={() => runProjectAction(group.project, "read")}
-                onAddConsole={() => openAddMywins(group.project)}
+            <div className="project-list">
+              {projects.map((group) => (
+                <section key={group.project} className="project-group">
+                  <ProjectHeader
+                    project={group.project}
+                    collapsed={collapsedProjects.has(group.project)}
+                    readonly={group.project === "pm2"}
+                    canReload={group.consoles.some((item) => item.projectPath)}
+                    gatherErrors={projectDefaults[group.project] ?? true}
+                    onGatherErrors={(enabled) => setProjectGatherErrors(group.project, enabled)}
+                    onToggleCollapsed={() => toggleProjectCollapsed(group.project)}
+                    onClose={closeProject}
+                    onRestart={() => runProjectAction(group.project, "restart")}
+                    onRestartExceptNoRun={() => runProjectAction(group.project, "restart-except-no-run")}
+                    onStop={() => runProjectAction(group.project, "stop")}
+                    onStart={() => runProjectAction(group.project, "start")}
+                    onReload={() => runProjectAction(group.project, "reload")}
+                    onMarkRead={() => runProjectAction(group.project, "read")}
+                    onAddConsole={() => openAddMywins(group.project)}
+                  />
+                  {!collapsedProjects.has(group.project) ? (
+                    <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} onEditConfig={openEditMywins} onDeleteConfig={deleteConsoleFromMywins} />
+                  ) : null}
+                </section>
+              ))}
+            </div>
+          </aside>
+          <section className="workspace">
+            {selected ? (
+              <TerminalPane
+                consoleRecord={selected}
+                toolbarHost={toolbarHost}
+                scrollRef={scrollRef}
+                debugMode={debugMode}
+                theme={theme}
+                onChanged={refresh}
+                onRename={renameConsole}
+                onClose={() => closeConsole(selected.id)}
+                onMarkRead={() => markConsoleRead(selected.id)}
+                onEditConfig={() => openEditMywins(selected.id)}
+                onDeleteConfig={() => deleteConsoleFromMywins(selected.id)}
               />
-              {!collapsedProjects.has(group.project) ? (
-                <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} onEditConfig={openEditMywins} onDeleteConfig={deleteConsoleFromMywins} />
-              ) : null}
-            </section>
-          ))}
-        </div>
-      </aside>
-      <section className="workspace">
-        {selected ? (
-          <TerminalPane
-            consoleRecord={selected}
-            toolbarHost={toolbarHost}
-            scrollRef={scrollRef}
-            debugMode={debugMode}
-            theme={theme}
-            onChanged={refresh}
-            onRename={renameConsole}
-            onClose={() => closeConsole(selected.id)}
-            onMarkRead={() => markConsoleRead(selected.id)}
-            onEditConfig={() => openEditMywins(selected.id)}
-            onDeleteConfig={() => deleteConsoleFromMywins(selected.id)}
-          />
-        ) : (
-          <div className="blank">Select or create a console</div>
-        )}
-      </section>
+            ) : (
+              <div className="blank">Select or create a console</div>
+            )}
+          </section>
         </div>
       </div>
 
@@ -1386,17 +1386,17 @@ function TerminalPane({
         {gatherError ? <div role="alert">{gatherError}</div> : null}
       </div>, toolbarHost) : null}
       {nativeError ? <div role="alert">{nativeError}</div> : null}
-        {!cardsCollapsed ? <CardsPanel cards={filteredCards} /> : null}
-        <div className="terminal-stage" ref={stageRef}>
-          <div ref={hostRef} className="terminal-host" hidden={!isReadonly && !canRestart} />
-          {!isReadonly && !canRestart ? <DisabledConsoleOverlay consoleRecord={consoleRecord} /> : null}
-        </div>
-        {debugMode ? <ErrorDebugPanel matches={cards.map((card) => ({ id: card.id, createdAt: card.createdAt, line: card.title, reason: `${card.kind} ${card.category}` }))} /> : null}
-        {!atTerminal ? (
-          <button className="scroll-terminal-button" onClick={() => scrollToTerminal()} title="Scroll to terminal" aria-label="Scroll to terminal">
-            v
-          </button>
-        ) : null}
+      {!cardsCollapsed ? <CardsPanel cards={filteredCards} /> : null}
+      <div className="terminal-stage" ref={stageRef}>
+        <div ref={hostRef} className="terminal-host" hidden={!isReadonly && !canRestart} />
+        {!isReadonly && !canRestart ? <DisabledConsoleOverlay consoleRecord={consoleRecord} /> : null}
+      </div>
+      {debugMode ? <ErrorDebugPanel matches={cards.map((card) => ({ id: card.id, createdAt: card.createdAt, line: card.title, reason: `${card.kind} ${card.category}` }))} /> : null}
+      {!atTerminal ? (
+        <button className="scroll-terminal-button" onClick={() => scrollToTerminal()} title="Scroll to terminal" aria-label="Scroll to terminal">
+          v
+        </button>
+      ) : null}
     </div>
   );
 }
