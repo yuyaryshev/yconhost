@@ -63,14 +63,37 @@ select {
   /* Keep terminal and menu layers below portaled modal surfaces. */
   isolation: isolate;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-header,
+.app-body {
+  display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  height: 100vh;
+}
+
+.app-header {
+  position: relative;
+  z-index: 1;
+  background: var(--panel-bg-strong);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-body {
+  min-height: 100%;
+}
+
+.console-toolbar-slot {
+  min-width: 0;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   border-right: 1px solid var(--border);
   background: var(--panel-bg);
 }
@@ -81,14 +104,17 @@ select {
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
+  min-width: 0;
+  border-right: 1px solid var(--border);
 }
 
 .toolbar {
   display: grid;
-  gap: 10px;
-  padding: 12px 16px 10px;
-  border-bottom: 1px solid var(--border);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  padding: 10px 16px;
 }
 
 h1,
@@ -192,7 +218,6 @@ h2 {
 }
 
 .project-list {
-  overflow: auto;
   padding: 10px;
 }
 
@@ -349,9 +374,8 @@ h2 {
 }
 
 .terminal-layout {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  height: 100vh;
+  min-height: 100%;
+  background: var(--terminal-bg);
 }
 
 .toolbar {
@@ -363,10 +387,16 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+}
+
+.toolbar-main > div:first-child {
+  min-width: min(180px, 45%);
+  flex: 1;
 }
 
 .detail-title-button {
-  max-width: 52vw;
+  max-width: 100%;
   border: 0;
   background: transparent;
   padding: 0;
@@ -397,7 +427,7 @@ h2 {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  max-width: 52vw;
+  max-width: 100%;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -475,8 +505,8 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-top: 9px;
-  border-top: 1px solid var(--border);
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
 }
 
 .cards-toolbar button {
@@ -523,7 +553,7 @@ h2 {
   position: relative;
   min-height: 0;
   overflow: auto;
-  background: var(--terminal-bg);
+  background: var(--app-bg);
 }
 
 .terminal-stage {
@@ -863,9 +893,14 @@ h2 {
 }
 
 @media (max-width: 760px) {
-  .app-shell {
+  .app-header,
+  .app-body {
     grid-template-columns: 1fr;
-    grid-template-rows: 240px minmax(0, 1fr);
+  }
+
+  .sidebar-header {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 
   .sidebar {
@@ -873,8 +908,13 @@ h2 {
     border-bottom: 1px solid var(--border);
   }
 
-  .terminal-layout {
-    height: calc(100vh - 240px);
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cards-toolbar {
+    padding-right: 0;
+    border-right: 0;
   }
 
   .settings-grid {

@@ -2,6 +2,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { Button, Dialog, DialogDismiss, DialogHeading, useDialogStore } from "@ariakit/react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -115,6 +116,8 @@ function App() {
   const [serverAlive, setServerAlive] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set(["pm2"]));
   const knownProjects = useRef(new Set<string>());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
   const advancedDialog = useDialogStore();
   const folderDialog = useDialogStore();
   const preferencesDialog = useDialogStore();
@@ -427,7 +430,7 @@ function App() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
+      <header className="app-header">
         <div className="sidebar-header">
           <h1>
             <span className={`server-status-dot ${serverAlive ? "alive" : "dead"}`} title={serverAlive ? "Server online" : "Server offline"} />
@@ -504,6 +507,11 @@ function App() {
             </div>
           </div>
         </div>
+        <div className="console-toolbar-slot" ref={setToolbarHost} />
+      </header>
+      <div className="console-scroll" ref={scrollRef}>
+        <div className="app-body">
+          <aside className="sidebar">
         <div className="project-list">
           {projects.map((group) => (
             <section key={group.project} className="project-group">
@@ -535,6 +543,8 @@ function App() {
         {selected ? (
           <TerminalPane
             consoleRecord={selected}
+            toolbarHost={toolbarHost}
+            scrollRef={scrollRef}
             debugMode={debugMode}
             theme={theme}
             onChanged={refresh}
@@ -548,6 +558,8 @@ function App() {
           <div className="blank">Select or create a console</div>
         )}
       </section>
+        </div>
+      </div>
 
       <Dialog store={folderDialog} className="dialog" backdrop={<div className="backdrop" />}>
         <DialogHeading className="dialog-title">Open folder</DialogHeading>
@@ -1070,6 +1082,8 @@ function EditableConsoleHeading({
 
 function TerminalPane({
   consoleRecord,
+  toolbarHost,
+  scrollRef,
   debugMode,
   theme,
   onChanged,
@@ -1080,6 +1094,8 @@ function TerminalPane({
   onDeleteConfig
 }: {
   consoleRecord: ConsoleRecord;
+  toolbarHost: HTMLDivElement | null;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
   debugMode: boolean;
   theme: AppTheme;
   onChanged: () => Promise<void>;
@@ -1090,9 +1106,10 @@ function TerminalPane({
   onDeleteConfig: () => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const loadedCardsConsole = useRef<string | null>(null);
   const [cards, setCards] = useState<ExtractedCard[]>([]);
   const [cardsCollapsed, setCardsCollapsed] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("info");
@@ -1122,7 +1139,7 @@ function TerminalPane({
   );
 
   function scrollToTerminal(behavior: ScrollBehavior = "smooth") {
-    hostRef.current?.scrollIntoView({ block: "end", behavior });
+    stageRef.current?.scrollIntoView({ block: "end", behavior });
   }
 
   useEffect(() => {
@@ -1154,10 +1171,6 @@ function TerminalPane({
     fetch(`/api/consoles/${consoleRecord.id}/output`)
       .then((response) => response.json())
       .then((data: { output: string }) => terminal.write(data.output, () => window.setTimeout(() => scrollToTerminal("auto"), 0)));
-
-    fetch(`/api/consoles/${consoleRecord.id}`)
-      .then((response) => response.json())
-      .then((data: ConsoleSnapshot) => setCards(data.cards ?? []));
 
     const sendInput = (data: string) => {
       if (isReadonly || isWindowsTerminalReply(consoleRecord.shell, data)) return;
@@ -1265,9 +1278,17 @@ function TerminalPane({
   }, [consoleRecord.id]);
 
   useEffect(() => {
+    const id = consoleRecord.id;
     fetch(`/api/consoles/${consoleRecord.id}`)
       .then((response) => response.json())
-      .then((data: ConsoleSnapshot) => setCards(data.cards ?? []));
+      .then((data: ConsoleSnapshot) => {
+        if (consoleIdRef.current !== id) return;
+        setCards(data.cards ?? []);
+        if (loadedCardsConsole.current !== id) {
+          loadedCardsConsole.current = id;
+          window.requestAnimationFrame(() => scrollToTerminal("auto"));
+        }
+      });
   }, [consoleRecord.id, consoleRecord.errorCount, consoleRecord.unseenErrorCount, gathering]);
 
   async function changeGatherErrors(enabled: boolean | null) {
@@ -1296,9 +1317,21 @@ function TerminalPane({
 
   function updateScrollState() {
     const node = scrollRef.current;
-    if (!node) return;
-    setAtTerminal(node.scrollHeight - node.scrollTop - node.clientHeight < 80);
+    const stage = stageRef.current;
+    if (!node || !stage) return;
+    setAtTerminal(stage.getBoundingClientRect().bottom <= node.getBoundingClientRect().bottom + 80);
   }
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    node.addEventListener("scroll", updateScrollState);
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(node);
+    if (stageRef.current?.parentElement) observer.observe(stageRef.current.parentElement);
+    updateScrollState();
+    return () => { node.removeEventListener("scroll", updateScrollState); observer.disconnect(); };
+  }, [scrollRef, consoleRecord.id, filteredCards.length, cardsCollapsed]);
 
   async function post(path: string, body: unknown = {}) {
     await fetch(`/api/consoles/${consoleRecord.id}/${path}`, {
@@ -1311,7 +1344,21 @@ function TerminalPane({
 
   return (
     <div className="terminal-layout" style={{ "--terminal-bg": terminalBackground } as React.CSSProperties}>
-      <header className="toolbar">
+      {toolbarHost ? createPortal(<div className="toolbar">
+        <div className="cards-toolbar">
+          <button className="cards-toggle" aria-expanded={!cardsCollapsed} onClick={() => setCardsCollapsed((value) => !value)}>
+            Cards
+          </button>
+          <button className={severityFilter === "error" ? "active-filter error" : "error"} onClick={() => setSeverityFilter("error")}>
+            Errors {cardCounts.error}
+          </button>
+          <button className={severityFilter === "warning" ? "active-filter warning" : "warning"} onClick={() => setSeverityFilter("warning")}>
+            Warnings {cardCounts.warning}
+          </button>
+          <button className={severityFilter === "info" ? "active-filter info" : "info"} onClick={() => setSeverityFilter("info")}>
+            Info {cardCounts.info}
+          </button>
+        </div>
         <div className="toolbar-main">
           <div>
             <EditableConsoleHeading consoleRecord={consoleRecord} onRename={onRename} />
@@ -1337,25 +1384,10 @@ function TerminalPane({
           ) : null}
         </div>
         {gatherError ? <div role="alert">{gatherError}</div> : null}
-        <div className="cards-toolbar">
-          <button className="cards-toggle" onClick={() => setCardsCollapsed((value) => !value)}>
-            Cards
-          </button>
-          <button className={severityFilter === "error" ? "active-filter error" : "error"} onClick={() => setSeverityFilter("error")}>
-            Errors {cardCounts.error}
-          </button>
-          <button className={severityFilter === "warning" ? "active-filter warning" : "warning"} onClick={() => setSeverityFilter("warning")}>
-            Warnings {cardCounts.warning}
-          </button>
-          <button className={severityFilter === "info" ? "active-filter info" : "info"} onClick={() => setSeverityFilter("info")}>
-            Info {cardCounts.info}
-          </button>
-        </div>
-      </header>
+      </div>, toolbarHost) : null}
       {nativeError ? <div role="alert">{nativeError}</div> : null}
-      <div className="console-scroll" ref={scrollRef} onScroll={updateScrollState}>
         {!cardsCollapsed ? <CardsPanel cards={filteredCards} /> : null}
-        <div className="terminal-stage">
+        <div className="terminal-stage" ref={stageRef}>
           <div ref={hostRef} className="terminal-host" hidden={!isReadonly && !canRestart} />
           {!isReadonly && !canRestart ? <DisabledConsoleOverlay consoleRecord={consoleRecord} /> : null}
         </div>
@@ -1365,7 +1397,6 @@ function TerminalPane({
             v
           </button>
         ) : null}
-      </div>
     </div>
   );
 }
