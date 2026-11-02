@@ -1,0 +1,41 @@
+import fs from "node:fs";
+import path from "node:path";
+import http from "node:http";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const directory = path.join(root, "data", "folder-verification");
+const compiled = new URL("../data/folder-verification/dist/src/server/", import.meta.url);
+const { ConsoleManager } = await import(new URL("consoleManager.js", compiled));
+const { FolderService } = await import(new URL("folderService.js", compiled));
+const { ConsoleStore } = await import(new URL("consoleStore.js", compiled));
+const { ProjectStore } = await import(new URL("projectStore.js", compiled));
+const { LogStore } = await import(new URL("logStore.js", compiled));
+const { FakeTerminalFactory } = await import(new URL("terminal.js", compiled));
+const { loadSettings } = await import(new URL("settings.js", compiled));
+const { createApp, attachWebSocket } = await import(new URL("api.js", compiled));
+fs.mkdirSync(directory, { recursive: true });
+process.env.YCONHOST_SETTINGS_PATH = path.join(directory, "settings.json5");
+const settings = { ...loadSettings(path.join(directory, "absent.json5")), port: Number(process.env.PORT ?? 4021), dataDir: path.join(directory, "state") };
+const factory = new FakeTerminalFactory();
+const manager = new ConsoleManager(settings, new LogStore(settings), factory, new ConsoleStore(settings), new ProjectStore(settings));
+const folders = new FolderService(manager);
+const markdown = path.join(directory, "contexts.md");
+if (!fs.existsSync(markdown)) fs.writeFileSync(markdown, '# Agent demo\nColor: STD_GREEN\nDescription: "Demo context"\n\n```cmd\nycodex --bypass-safety-y resume demo-session\n```\n\n# Claude demo\nColor: STD_CYAN\n```cmd\nclaude --resume claude-session\n```\n');
+const scriptPath = path.join(directory, "agents.mjs");
+fs.writeFileSync(scriptPath, `import { createCodexFolder } from ${JSON.stringify(new URL("folders/codexes.mjs", compiled).href)};\nconst source = createCodexFolder(${JSON.stringify({ contextsPath: markdown, defaultCwd: directory })});\nexport const { list, defineFields, create, update } = source;\nconst remove = source.delete;\nexport { remove as delete };\n`);
+await folders.configure({ name: "Agents demo", type: "scripted", scriptPath, intervalSeconds: 0, gatherErrors: false, confirmed: true });
+await folders.ensureManual("Default");
+await folders.initialize();
+process.chdir(directory);
+const server = http.createServer(createApp(manager, { folders }));
+const sockets = attachWebSocket(server, manager);
+function shutdown() {
+  folders.dispose(); manager.dispose();
+  for (const client of sockets.clients) client.terminate();
+  sockets.close(); server.close(() => process.exit(0));
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("message", (message) => { if (message === "shutdown") shutdown(); });
+server.listen(settings.port, "127.0.0.1", () => console.log(`Folder verification: http://127.0.0.1:${settings.port}`));

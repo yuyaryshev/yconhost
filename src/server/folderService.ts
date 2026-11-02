@@ -21,6 +21,7 @@ interface State { info: FolderInfo; runner?: FolderRunner; queue: Promise<unknow
 export class FolderService {
   private readonly states = new Map<string, State>();
   private disposed = false;
+  private configurationQueue: Promise<unknown> = Promise.resolve();
   readonly store: ProjectStore;
 
   constructor(private readonly manager: ConsoleManager, private readonly timeoutMs = 10_000) {
@@ -49,27 +50,36 @@ export class FolderService {
   }
 
   async initialize(): Promise<void> {
-    await Promise.all(this.list().filter((folder) => folder.type !== "manual").map((folder) => this.listFolder(folder.id).catch(() => undefined)));
+    await Promise.all(this.list().map((folder) => this.listFolder(folder.id).catch(() => undefined)));
   }
 
   async configure(config: FolderConfig): Promise<FolderInfo> {
+    const next = this.configurationQueue.catch(() => undefined).then(() => this.configureNow(config));
+    this.configurationQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async configureNow(config: FolderConfig): Promise<FolderInfo> {
+    if (this.disposed) throw new Error("Folder service stopped");
+    for (const key of ["gatherErrors", "closeRemoves", "confirmed"] as const) if (config[key] !== undefined && typeof config[key] !== "boolean") throw new Error(`${key} must be a boolean`);
     if (typeof config.name !== "string" || !config.name.trim()) throw new Error("Folder name is required");
     const existing = this.states.get(config.name.trim().toLowerCase());
     if (config.id && existing?.info.id !== config.id) throw new Error("Folder identity mismatch");
-    const info: FolderInfo = { ...existing?.info, ...config, name: config.name.trim(), id: existing?.info.id ?? crypto.randomUUID(),
+    const info: FolderInfo = { ...existing?.info, ...config, name: existing?.info.name ?? config.name.trim(), id: existing?.info.id ?? crypto.randomUUID(),
       intervalSeconds: config.intervalSeconds ?? existing?.info.intervalSeconds ?? 60,
       gatherErrors: config.gatherErrors ?? existing?.info.gatherErrors ?? true, capabilities: { ...editable } };
     if (!["manual", "my_wins", "scripted"].includes(info.type)) throw new Error("Unknown folder type");
     if (!Number.isFinite(info.intervalSeconds) || info.intervalSeconds! < 0 || info.intervalSeconds! > 86400) throw new Error("Update interval must be 0..86400 seconds");
     if (info.type === "scripted") {
       if (!info.scriptPath || !path.isAbsolute(info.scriptPath) || !fs.statSync(info.scriptPath).isFile()) throw new Error("An absolute local scriptPath is required");
-      info.scriptPath = path.resolve(info.scriptPath);
+      info.scriptPath = fs.realpathSync(info.scriptPath);
       if (this.list().some((other) => other.id !== info.id && other.type === "scripted" && other.scriptPath?.toLowerCase() === info.scriptPath!.toLowerCase())) throw new Error("One folder per JS file: this script is already registered");
     } else info.scriptPath = undefined;
     if (info.type === "my_wins") {
       if (!info.projectPath) throw new Error("projectPath is required for my_wins");
       info.projectPath = path.resolve(info.projectPath);
     } else info.projectPath = undefined;
+    if (info.type !== "manual") info.closeRemoves = false;
     const recreate = existing && (existing.info.type !== info.type || existing.info.scriptPath !== info.scriptPath || existing.info.projectPath !== info.projectPath);
     if (recreate && config.confirmed !== true) throw new Error("Changing source/type recreates the folder and stops its owned sessions; confirmed=true is required");
     const apply = async () => {
@@ -80,6 +90,7 @@ export class FolderService {
           runner = new FolderRunner(info.scriptPath!, this.timeoutMs);
           prepared = await this.readScript(info, runner);
         } else if (info.type === "my_wins") prepared = { items: this.readMywins(info), capabilities: { ...editable } };
+        if (prepared && !recreate) this.manager.validateFolderSync(info, prepared.items);
       } catch (error) { runner?.dispose(); throw error; }
       if (this.disposed) { runner?.dispose(); throw new Error("Folder service stopped"); }
       if (existing) this.stopState(existing);
@@ -113,7 +124,7 @@ export class FolderService {
     });
   }
 
-  async entry(project: string, id?: string): Promise<{ folder: FolderInfo; fields: FolderField[]; values: Record<string, string> }> {
+  async entry(project: string, id?: string): Promise<{ folder: FolderInfo; fields: FolderField[]; values: Record<string, string>; revision?: string }> {
     const state = this.require(project);
     return this.locked(state, async () => {
       const record = id ? this.record(id) : undefined;
@@ -127,7 +138,7 @@ export class FolderService {
       const values = record ? { ...record.sourceValues, name: record.name, description: record.description ?? "", cwd: record.cwd,
         background: record.background ?? "", command: record.command, ...record.sourceValues } :
         Object.fromEntries(fields.map((field) => [field.name, field.defaultValue ?? ""]));
-      return { folder: state.info, fields, values };
+      return { folder: state.info, fields, values, revision: record ? this.revision(record) : undefined };
     });
   }
 
@@ -143,11 +154,12 @@ export class FolderService {
     });
   }
 
-  async updateEntry(id: string, values: Record<string, string>): Promise<ConsoleRecord[]> {
-    const record = this.record(id);
-    if (record.readonly || record.orphaned) throw new Error("Console source is readonly or orphaned");
-    const state = this.require(record.project);
+  async updateEntry(id: string, values: Record<string, string>, revision?: string): Promise<ConsoleRecord[]> {
+    const state = this.require(this.record(id).project);
     return this.locked(state, async () => {
+      const record = this.record(id);
+      if (record.readonly || record.orphaned) throw new Error("Console source is readonly or orphaned");
+      if (revision && revision !== this.revision(record)) throw new Error("Source changed externally; reopen the dialog");
       await this.validateValues(state, values);
       if (!state.info.capabilities.update) throw new Error("Folder does not support update");
       let remap: { id: string; key: string } | undefined;
@@ -166,7 +178,7 @@ export class FolderService {
   async renameEntry(id: string, name: string): Promise<ConsoleRecord> {
     const record = this.record(id);
     const form = await this.entry(record.project, id);
-    await this.updateEntry(id, { ...form.values, name });
+    await this.updateEntry(id, { ...form.values, name }, form.revision);
     return this.record(id);
   }
 
@@ -272,6 +284,7 @@ export class FolderService {
 
   private context(info: FolderInfo) { return { folder: { id: info.id, name: info.name }, dataDir: this.manager.getSettings().dataDir }; }
   private original(record: ConsoleRecord) { return { ...record.sourceValues, key: record.sourceKey ?? record.name, name: record.name }; }
+  private revision(record: ConsoleRecord) { return crypto.createHash("sha256").update(JSON.stringify([record.sourceKey, record.sourceValues, record.name, record.description, record.command, record.cwd, record.background])).digest("hex"); }
 
   private async applyList(state: State, remap?: { id: string; key: string }): Promise<ConsoleRecord[]> {
     try {
@@ -318,6 +331,7 @@ export class FolderService {
       keys.add(item.key); names.add(item.name);
       for (const field of ["command", "cwd", "shell", "description", "background"] as const) if (item[field] !== undefined && typeof item[field] !== "string") throw new Error(`Invalid entry ${field}`);
       if (item.args !== undefined && (!Array.isArray(item.args) || item.args.some((arg) => typeof arg !== "string"))) throw new Error("Invalid entry args");
+      for (const field of ["readonly", "noRun", "ansiParserEnabled"] as const) if (item[field] !== undefined && typeof item[field] !== "boolean") throw new Error(`Invalid entry ${field}`);
       if (item.values !== undefined && (!item.values || typeof item.values !== "object" || Array.isArray(item.values) || Object.values(item.values).some((field) => typeof field !== "string"))) throw new Error("Entry values must be strings");
       if (item.background && !resolveConsoleBackground(item.background)) throw new Error("Invalid background color");
       if (item.readonly && !capabilities.readOutput) throw new Error("Readonly entries require readOutput");
@@ -332,7 +346,7 @@ export class FolderService {
     if (!Array.isArray(value) || value.length > 64) throw new Error("defineFields must return at most 64 fields");
     const names = new Set<string>();
     for (const field of value) {
-      if (!field || !/^[a-zA-Z_][\w-]*$/.test(field.name) || ["__proto__", "constructor", "prototype"].includes(field.name) || names.has(field.name) || !["string", "color"].includes(field.type) || typeof field.label !== "string") throw new Error("Invalid defineFields schema");
+      if (!field || typeof field.name !== "string" || !/^[a-zA-Z_][\w-]*$/.test(field.name) || ["__proto__", "constructor", "prototype"].includes(field.name) || names.has(field.name) || !["string", "color"].includes(field.type) || typeof field.label !== "string" || field.required !== undefined && typeof field.required !== "boolean" || field.defaultValue !== undefined && typeof field.defaultValue !== "string") throw new Error("Invalid defineFields schema");
       names.add(field.name);
     }
     return value;

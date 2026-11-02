@@ -116,10 +116,13 @@ describe("Generic folders", () => {
     await folders.listFolder("custom", true);
     expect(manager.list("custom")).toEqual([]);
     expect(folders.get("custom").error).toBeUndefined();
+    fs.writeFileSync(scriptPath, "export function list() { return []; } export function defineFields() { return [{ name: 'background', label: 'Color', type: 'color', defaultValue: 42 }]; }");
+    await folders.listFolder("custom", true);
+    await expect(folders.entry("custom")).rejects.toThrow("Invalid defineFields");
   });
 
   it("requires confirmation for recreation, validates before stopping, and keeps source files/logs", async () => {
-    const { dataFile } = await source();
+    const { dataFile, scriptPath } = await source();
     const record = manager.list("custom")[0];
     manager.start(record.id);
     factory.sessions[0].push("archive\r\n");
@@ -128,6 +131,10 @@ describe("Generic folders", () => {
     fs.writeFileSync(broken, "throw new Error('cannot load')");
     await expect(folders.configure({ name: "custom", type: "scripted", scriptPath: broken, confirmed: true })).rejects.toThrow("cannot load");
     expect(factory.sessions[0].killed).toBe(false);
+    fs.writeFileSync(scriptPath, "export function list() { return [{ key: 'one', name: 'One', readonly: true }]; } export function readOutput() { return ''; }");
+    await expect(folders.configure({ name: "custom", type: "scripted", scriptPath })).rejects.toThrow("Stop the owned console");
+    expect(folders.get("custom").capabilities.create).toBe(true);
+    expect(manager.get(record.id).readonly).not.toBe(true);
     await folders.configure({ name: "custom", type: "manual", confirmed: true });
     expect(factory.sessions[0].killed).toBe(true);
     expect(manager.list("custom")).toEqual([]);
@@ -182,6 +189,50 @@ describe("Generic folders", () => {
     expect(legacy.body.result.isError).toBe(true);
     await request(app).post("/api/consoles").send({ project: "custom" }).expect(400);
     await request(app).get("/api/projects/custom/settings").expect(200);
+  });
+
+  it("rejects stale form revisions even after a periodic list has adopted the external edit", async () => {
+    const { dataFile } = await source();
+    const record = manager.list("custom")[0];
+    const form = await folders.entry("custom", record.id);
+    const entries = JSON.parse(fs.readFileSync(dataFile, "utf8"));
+    entries[0].values.description = "external edit";
+    fs.writeFileSync(dataFile, JSON.stringify(entries));
+    await folders.listFolder("custom");
+    await expect(folders.updateEntry(record.id, { ...form.values, name: "stale rename" }, form.revision)).rejects.toThrow("externally");
+    expect(JSON.parse(fs.readFileSync(dataFile, "utf8"))[0].values.description).toBe("external edit");
+  });
+
+  it("serializes folder registration and does not leak duplicate instances", async () => {
+    await Promise.all([folders.configure({ name: "Shared", type: "manual" }), folders.configure({ name: "Shared", type: "manual" })]);
+    expect(folders.list().filter((folder) => folder.name === "Shared")).toHaveLength(1);
+    expect(folders.store.listManagedProjects().filter((folder) => folder.name === "Shared")).toHaveLength(1);
+  });
+
+  it("renames a manual shell without rewriting its arguments or marking restart pending", async () => {
+    const record = manager.create({ name: "Shell", shell: "cmd.exe", args: [] });
+    await folders.renameEntry(record.id, "Renamed shell");
+    expect(manager.get(record.id)).toMatchObject({ name: "Renamed shell", args: [], pendingRestart: false });
+    manager.restart(record.id);
+    expect(manager.get(record.id).args).toEqual([]);
+  });
+
+  it("preserves mywins identity/history on rename and supports adding to an empty configured folder", async () => {
+    const projectPath = path.join(dir, "wins");
+    fs.mkdirSync(projectPath);
+    const file = path.join(projectPath, "mywins.json");
+    fs.writeFileSync(file, '{"unrelated":42,"wins":{}}');
+    await folders.configure({ name: "Named wins", type: "my_wins", projectPath, intervalSeconds: 0 });
+    await folders.createEntry("Named wins", { name: "Before", command: "echo old", cwd: "", no_run: "false", background: "STD_GREEN" });
+    const record = manager.list("Named wins")[0];
+    manager.start(record.id);
+    factory.sessions[0].push("retain this log\r\n");
+    const form = await folders.entry("Named wins", record.id);
+    await folders.updateEntry(record.id, { ...form.values, name: "After", command: "echo new" }, form.revision);
+    expect(manager.get(record.id)).toMatchObject({ name: "After", pendingRestart: true, project: "Named wins" });
+    expect(manager.readOutput(record.id)).toContain("retain this log");
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({ unrelated: 42, wins: { After: { cmd: "echo new" } } });
+    expect(factory.sessions).toHaveLength(1);
   });
 
   it("serializes overlapping mutations and periodically lists without starting commands", async () => {

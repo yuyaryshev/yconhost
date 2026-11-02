@@ -8,7 +8,7 @@ import type { AppSettings } from "./types.js";
 export async function migrateBuiltinFolders(folders: FolderService, settings: AppSettings): Promise<void> {
   const marker = path.join(settings.dataDir, "folder-sources-v1.json");
   if (fs.existsSync(marker)) return;
-  const directory = path.join(settings.dataDir, "folder-scripts");
+  const directory = path.resolve(settings.dataDir, "folder-scripts");
   fs.mkdirSync(directory, { recursive: true });
   const codexLibrary = new URL("./folders/codexes.mjs", import.meta.url).href;
   const codexScript = path.join(directory, "codexes.mjs");

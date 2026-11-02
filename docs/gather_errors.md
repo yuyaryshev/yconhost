@@ -7,15 +7,16 @@ warnings and informational messages), not terminal output or text-log storage.
 ## Defaults and Overrides
 
 - Sessions inherit their project's default unless explicitly overridden.
-- Projects default to enabled. The codexes project (case-insensitive), including
-  Claude slots, and the configured Codex-context project default to disabled.
+- Projects default to enabled. The migrated Codex/Claude scripted folder defaults
+  to disabled through persisted folder metadata, not a runtime name comparison.
+  A new manual folder merely named codexes has the ordinary enabled default.
 - Existing sessions without an override inherit these defaults on upgrade too.
 - The project menu's Gather errors by default checkbox updates inherited sessions
   and future sessions. Explicit session choices are preserved.
 - Changing the session switch saves an override. The adjacent reset arrow restores
   inheritance; its tooltip is Use project default.
 - Defaults are saved in managed-projects.json; session overrides in consoles.json.
-  Start, Restart, mywins reload and context reimport preserve the override.
+  Start, Restart and source list operations preserve the override.
 - PM2's read-only log views do not collect diagnostic cards and have no switch.
 
 Disabling clears displayed cards and counters immediately and cancels pending

@@ -45,13 +45,15 @@ export function FolderEntryDialog({ dialog, project, id, theme, onSaved }: { dia
   const [fields, setFields] = useState<FolderField[]>([]);
   const [original, setOriginal] = useState<Record<string, string>>({});
   const [values, setValues] = useState<Record<string, string>>({});
+  const [revision, setRevision] = useState<string>();
+  const [folderType, setFolderType] = useState<FolderConfig["type"]>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     let disposed = false;
-    requestJson<{ fields: FolderField[]; values: Record<string, string> }>(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/fields`)
-      .then((form) => { if (!disposed) { setFields(form.fields); setOriginal(form.values); setValues(form.values); } })
+    requestJson<{ fields: FolderField[]; values: Record<string, string>; revision?: string; folder: FolderInfo }>(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/fields`)
+      .then((form) => { if (!disposed) { setFields(form.fields); setOriginal(form.values); setValues(form.values); setRevision(form.revision); setFolderType(form.folder.type); } })
       .catch((reason: Error) => { if (!disposed) setError(reason.message); })
       .finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
@@ -59,7 +61,7 @@ export function FolderEntryDialog({ dialog, project, id, theme, onSaved }: { dia
   async function save() {
     setSaving(true); setError("");
     try {
-      await requestJson(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/entries`, id ? "PUT" : "POST", { values });
+      await requestJson(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/entries`, id ? "PUT" : "POST", { values, revision });
       dialog.hide();
       await onSaved();
     } catch (reason) { setValues(original); setError((reason as Error).message); }
@@ -69,8 +71,9 @@ export function FolderEntryDialog({ dialog, project, id, theme, onSaved }: { dia
     <DialogHeading className="dialog-title">{id ? "Console settings" : "Add console"}</DialogHeading>
     <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <fieldset disabled={loading || saving} className="settings-grid fields-grid">
-        {fields.map((field) => field.type === "color" ? <ColorField key={field.name} name={field.name} label={field.label} theme={theme} value={values[field.name] ?? ""} onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))} /> :
-          <label key={field.name}>{field.label}<input name={field.name} required={field.required} value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} /></label>)}
+        {fields.map((field) => field.type === "color" ? <ColorField key={field.name} name={field.name} label={field.label} theme={theme} value={values[field.name] ?? ""} onChange={(value) => { setError(""); setValues((current) => ({ ...current, [field.name]: value })); }} /> :
+          folderType === "my_wins" && ["no_run", "ansiParserEnabled"].includes(field.name) ? <label key={field.name} className="checkbox-label"><input type="checkbox" checked={values[field.name] === "true"} onChange={(event) => setValues((current) => ({ ...current, [field.name]: String(event.target.checked) }))} />{field.name === "no_run" ? "no_run" : "ANSI parser"}</label> :
+          <label key={field.name}>{field.label}<input name={field.name} required={field.required} value={values[field.name] ?? ""} onChange={(event) => { setError(""); setValues((current) => ({ ...current, [field.name]: event.target.value })); }} /></label>)}
       </fieldset>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="dialog-actions"><DialogDismiss type="button" className="secondary-button" disabled={saving}>Cancel</DialogDismiss><Button type="submit" className="primary-button" disabled={loading || saving}>{saving ? "Saving..." : "Save"}</Button></div>
@@ -115,7 +118,7 @@ export function FolderSettingsDialog({ dialog, project, onSaved }: { dialog: Dia
         {draft.type === "my_wins" ? <label>Project directory<input required value={draft.projectPath ?? ""} onChange={(event) => update("projectPath", event.target.value)} /></label> : null}
         {draft.type !== "manual" ? <label>Update interval (seconds; 0 = manual)<input type="number" min="0" max="86400" step="1" value={draft.intervalSeconds ?? 60} onChange={(event) => update("intervalSeconds", Number(event.target.value))} /></label> : null}
         <label className="checkbox-label"><input type="checkbox" checked={draft.gatherErrors !== false} onChange={(event) => update("gatherErrors", event.target.checked)} />Gather errors by default</label>
-        <label className="checkbox-label"><input type="checkbox" checked={draft.closeRemoves === true} onChange={(event) => update("closeRemoves", event.target.checked)} />Remove slot on Close</label>
+        {draft.type === "manual" ? <label className="checkbox-label"><input type="checkbox" checked={draft.closeRemoves === true} onChange={(event) => update("closeRemoves", event.target.checked)} />Remove slot on Close</label> : null}
       </fieldset>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="dialog-actions"><DialogDismiss type="button" className="secondary-button" disabled={saving}>Cancel</DialogDismiss><Button type="submit" className="primary-button" disabled={loading || saving}>{saving ? "Saving..." : "Save"}</Button></div>

@@ -3,6 +3,11 @@
 Status: planning / partially implemented; product decisions updated on 2026-10-05.
 Created: 2026-10-05.
 
+Update 2026-11-02: the legacy Codex-specific importer described below is replaced
+by a generic scripted folder exporting list. See [Folder Scripts](folder_scripts.md)
+for current Settings, CRUD, STD colors and HTTP/MCP operations. Earlier entries
+below are retained as migration history, not the current API contract.
+
 ## Source Request
 
 The user currently opens Codex through `D:\ProgsReady\WezTerm\yy_wezterm.cmd`.

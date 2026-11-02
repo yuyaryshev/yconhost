@@ -471,7 +471,7 @@ function App() {
                   <ProjectHeader
                     project={group.project}
                     collapsed={collapsedProjects.has(group.project)}
-                    readonly={group.consoles.length > 0 && group.consoles.every((item) => item.readonly)}
+                    readonly={group.consoles.length > 0 && group.consoles.every((item) => item.readonly) || Boolean(projectInfos.find((item) => item.name === group.project)?.capabilities?.readOutput && projectInfos.find((item) => item.name === group.project)?.capabilities?.create === false)}
                     canReload={projectInfos.find((item) => item.name === group.project)?.type !== "manual"}
                     canCreate={projectInfos.find((item) => item.name === group.project)?.capabilities?.create !== false}
                     error={projectInfos.find((item) => item.name === group.project)?.error}

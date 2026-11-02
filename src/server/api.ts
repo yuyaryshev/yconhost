@@ -27,7 +27,7 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
   app.get("/api/projects/:project/fields", route(respond((req) => folders.entry(param(req, "project")))));
   app.post("/api/projects/:project/entries", route(respond((req) => folders.createEntry(param(req, "project"), req.body.values ?? req.body))));
   app.get("/api/consoles/:id/entry", route(respond((req) => folders.entry(manager.get(param(req, "id")).project, param(req, "id")))));
-  app.put("/api/consoles/:id/entry", route(respond((req) => folders.updateEntry(param(req, "id"), req.body.values ?? req.body))));
+  app.put("/api/consoles/:id/entry", route(respond((req) => folders.updateEntry(param(req, "id"), req.body.values ?? req.body, req.body.revision))));
   app.delete("/api/consoles/:id/entry", route(respond(async (req) => { await folders.deleteEntry(param(req, "id"), req.body.confirmed === true); return { ok: true }; })));
 
   app.get("/api/recent-projects", (_req, res) => { res.json({ projects: manager.recentProjects() }); });
@@ -36,10 +36,13 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
   app.post("/api/settings", route(respond((req) => ({ settings: manager.updateSettings(saveSettings(req.body.settings ?? req.body)) }))));
   app.post("/api/consoles", route(respond((req) => manualConsole(req.body))));
   app.post("/api/batch", route(respond(async (req) => {
-    const records = manager.createBatch(req.body.projectPath, req.body.fileName);
+    if (typeof req.body.projectPath !== "string" || !req.body.projectPath) throw new Error("projectPath is required");
     const name = path.basename(path.resolve(req.body.projectPath));
-    await folders.configure({ name, type: "my_wins", projectPath: req.body.projectPath });
-    return records;
+    const previous = new Set(manager.list(name).map((item) => item.id));
+    await folders.configure({ name, type: "my_wins", projectPath: req.body.projectPath, confirmed: req.body.confirmed === true });
+    manager.createBatch(req.body.projectPath, req.body.fileName, { startNew: false });
+    for (const record of manager.list(name)) if (!previous.has(record.id) && !record.noRun && !record.orphaned) manager.start(record.id);
+    return manager.list(name);
   })));
   app.get("/api/consoles/:id", route(respond((req) => folders.snapshot(param(req, "id")))));
   app.get("/api/consoles/:id/output", route(respond(async (req) => ({ output: await folders.readOutput(param(req, "id"), req.query.tailLines ? Number(req.query.tailLines) : undefined) }))));
@@ -56,16 +59,12 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
     if (typeof req.body.visible !== "boolean") throw new Error("visible must be a boolean");
     return manager.nativeWindow(param(req, "id"), req.body.visible);
   })));
-  app.get("/api/consoles/:id/mywins", route(respond((req) => manager.getMywinsEntry(param(req, "id")))));
-  app.put("/api/consoles/:id/mywins", route(respond((req) => manager.updateMywinsEntry(param(req, "id"), req.body))));
-  app.delete("/api/consoles/:id/mywins", route(respond((req) => manager.deleteMywinsEntry(param(req, "id")))));
   app.delete("/api/consoles/:id", route(respond((req) => { manager.kill(param(req, "id")); return { ok: true }; })));
   app.post("/api/projects/:project/restart", route(respond((req) => manager.restartProject(param(req, "project")))));
   app.post("/api/projects/:project/restart-except-no-run", route(respond((req) => manager.restartProjectExceptNoRun(param(req, "project")))));
   app.post("/api/projects/:project/stop", route(respond((req) => { manager.stopProject(param(req, "project")); return { ok: true }; })));
   app.post("/api/projects/:project/start", route(respond((req) => manager.startProject(param(req, "project")))));
   app.post("/api/projects/:project/reload", route(respond((req) => folders.listFolder(param(req, "project"), true))));
-  app.post("/api/projects/:project/mywins", route(respond((req) => manager.addMywinsEntry(param(req, "project"), req.body))));
   app.post("/api/projects/:project/read", route(respond((req) => { manager.markProjectRead(param(req, "project")); return { ok: true }; })));
   app.post("/api/projects/:project/gather-errors", route(respond((req) => { folders.setGatherErrors(param(req, "project"), req.body.enabled); return manager.listProjects().find((item) => item.name === param(req, "project")); })));
   app.delete("/api/projects/:project", route(respond((req) => { folders.close(param(req, "project")); return { ok: true }; })));
@@ -84,7 +83,7 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
     { name: "list_folder", description: "Reread the local script and call list(context), reconciling idle slots without launching processes. Retains the last good list on failure.", properties: { project: string }, required: ["project"], run: (a) => folders.listFolder(a.project, true) },
     { name: "get_folder_fields", description: "Read shared create/edit fields and original values. Types: string and color; color values are HEX/RGB or STD_* strings. Omitted defineFields defaults to name and description.", properties: { project: string, id: string }, required: ["project"], run: (a) => folders.entry(a.project, a.id) },
     { name: "create_folder_entry", description: "Create in the folder source using string values, then call list. Only available when the source exports create; never bypasses the source.", properties: { project: string, values }, required: ["project", "values"], run: (a) => folders.createEntry(a.project, a.values) },
-    { name: "update_folder_entry", description: "Edit a source entry via update(original, values), then list. Pass all form values. Preserves console ID/history when update returns its new key. Codex forbids changing name and session_id together.", properties: { id: string, values }, required: ["id", "values"], run: (a) => folders.updateEntry(a.id, a.values) },
+    { name: "update_folder_entry", description: "Edit a source entry via update(original, values), then list. Pass all form values and the revision from get_folder_fields to detect concurrent edits. Preserves console ID/history when update returns its new key. Codex forbids changing name and session_id together.", properties: { id: string, values, revision: string }, required: ["id", "values"], run: (a) => folders.updateEntry(a.id, a.values, a.revision) },
     { name: "delete_folder_entry", description: "Delete/disable an entry in its source, stopping its owned process only after source success. Requires confirmed=true. Codex marks H1 with DELETED; PM2 is readonly.", properties: { id: string, confirmed: boolean }, required: ["id", "confirmed"], run: async (a) => { await folders.deleteEntry(a.id, a.confirmed === true); return { ok: true }; } },
     { name: "get_console_state", description: "Read session status, last input/output timestamps and the last few output lines. tailLines defaults to 8.", properties: { id: string, tailLines: { type: "number" } }, required: ["id"], run: (a) => folders.sessionState(a.id, a.tailLines) },
     { name: "read_console", description: "Read output of an owned or external readonly console.", properties: { id: string, tailLines: { type: "number" } }, required: ["id"], run: (a) => folders.readOutput(a.id, a.tailLines) },

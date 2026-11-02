@@ -197,7 +197,7 @@ describe("HTTP API", () => {
     const created = await request(app).post("/api/batch").send({ projectPath: dir }).expect(200);
     const [target, keep, idle] = created.body;
     const sessionsBefore = factory.sessions.length;
-    await request(app).delete(`/api/consoles/${target.id}/mywins`).expect(200);
+    await request(app).delete(`/api/consoles/${target.id}/entry`).send({ confirmed: true }).expect(200);
     const document = JSON.parse(fs.readFileSync(configPath, "utf8"));
     expect(document.custom).toEqual({ retain: true });
     expect(Object.keys(document.wins)).toEqual(["keep", "idle"]);
@@ -305,7 +305,8 @@ describe("HTTP API", () => {
     fs.writeFileSync(path.join(dir, "my_wins.json"), JSON.stringify({ wins: { two: { cmd: "npm run two:changed" }, three: { cmd: "npm run three", no_run: true } } }), "utf8");
     const reloaded = await request(projectApp).post(`/api/projects/${path.basename(dir)}/reload`).expect(200);
     expect(reloaded.body.map((item: { name: string }) => item.name)).toEqual(["two", "three"]);
-    expect(projectManager.list(path.basename(dir)).map((item) => item.name)).toEqual(["two", "three"]);
+    expect(projectManager.list(path.basename(dir)).map((item) => item.name)).toEqual(["two", "three", "one"]);
+    expect(projectManager.list(path.basename(dir))[2]).toMatchObject({ name: "one", orphaned: true, status: "running" });
     expect(projectManager.list(path.basename(dir))[0]).toMatchObject({ name: "two", command: "npm run two:changed" });
     expect(projectManager.list(path.basename(dir))[1]).toMatchObject({ name: "three", status: "idle" });
 

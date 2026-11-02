@@ -224,15 +224,3 @@ export interface MywinsEntry {
   ansiParserEnabled?: boolean;
   background?: string;
 }
-
-export interface CodexContextsImportRequest {
-  project?: string;
-  contextsPath?: string;
-  weztermPresetsPath?: string;
-}
-
-export interface CodexContextsImportResult {
-  project: string;
-  imported: number;
-  consoles: ConsoleRecord[];
-}

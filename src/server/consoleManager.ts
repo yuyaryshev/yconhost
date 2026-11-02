@@ -35,6 +35,7 @@ export class ConsoleManager {
   private readonly managedProjects = new Set<string>();
   private readonly projectGatherErrors = new Map<string, boolean>();
   private readonly folders = new Map<string, FolderInfo>();
+  private disposed = false;
 
   constructor(
     private settings: AppSettings,
@@ -144,6 +145,7 @@ export class ConsoleManager {
     this.projectStore?.setGatherErrors(created.name, enabled);
     this.projectGatherErrors.set(created.name.toLowerCase(), enabled);
     for (const item of this.itemsForProject(created.name)) {
+      if (item.record.readonly) continue;
       if (item.record.gatherErrorsOverride !== undefined) continue;
       this.applyGatherErrors(item, enabled);
     }
@@ -181,11 +183,20 @@ export class ConsoleManager {
     for (const item of this.itemsForProject(folder.name)) {
       item.record.folderId = folder.id;
       item.record.capabilities = folder.capabilities;
-      if (item.record.gatherErrorsOverride === undefined && item.record.gatherErrors !== (folder.gatherErrors !== false)) this.applyGatherErrors(item, folder.gatherErrors !== false);
+      if (!item.record.readonly && item.record.gatherErrorsOverride === undefined && item.record.gatherErrors !== (folder.gatherErrors !== false)) this.applyGatherErrors(item, folder.gatherErrors !== false);
+    }
+  }
+
+  validateFolderSync(folder: FolderInfo, definitions: FolderItem[], remap?: { id: string; key: string }): void {
+    for (const definition of definitions) {
+      if (definition.readonly && this.itemsForProject(folder.name).some((item) => item.session && (remap?.id === item.record.id && remap.key === definition.key || item.record.sourceKey === definition.key || item.record.sourceKey === undefined && item.record.name === definition.name))) {
+        throw new Error("Stop the owned console before changing it into an external readonly entry");
+      }
     }
   }
 
   reconcileFolder(folder: FolderInfo, definitions: FolderItem[], capabilities: FolderCapabilities, remap?: { id: string; key: string }): ConsoleRecord[] {
+    this.validateFolderSync(folder, definitions, remap);
     const used = new Set<string>();
     const records: ConsoleRecord[] = [];
     for (const definition of definitions) {
@@ -201,6 +212,10 @@ export class ConsoleManager {
         persistent: true, projectPath: folder.projectPath, background: definition.background
       }, false).id);
       const record = item.record;
+      if (record.readonly && !definition.readonly) {
+        record.pid = undefined;
+        record.status = "idle";
+      }
       record.pendingRestart = Boolean(item.session && item.activeLaunch !== JSON.stringify([command, cwd, shell, args]));
       Object.assign(record, {
         folderId: folder.id, sourceKey: definition.key, sourceValues: definition.values ?? {},
@@ -241,9 +256,10 @@ export class ConsoleManager {
     if (!values.name?.trim()) throw new Error("Console name is required");
     const command = values.command ?? item.record.command;
     const cwd = path.resolve(values.cwd || item.record.cwd);
-    item.record.pendingRestart = Boolean(item.session && item.activeLaunch !== JSON.stringify([command, cwd, item.record.shell, commandArgs(item.record.shell, command)]));
+    const args = command === item.record.command ? item.record.args : command ? commandArgs(item.record.shell, command) : [];
+    item.record.pendingRestart = Boolean(item.session && item.activeLaunch !== JSON.stringify([command, cwd, item.record.shell, args]));
     Object.assign(item.record, { name: values.name.trim(), description: values.description ?? "", command, cwd,
-      args: commandArgs(item.record.shell, command), background: values.background || undefined,
+      args, background: values.background || undefined,
       backgroundColor: resolveConsoleBackground(values.background), updatedAt: new Date().toISOString() });
     this.persist();
     return item.record;
@@ -262,6 +278,7 @@ export class ConsoleManager {
       sourceValues: request.sourceValues,
       description: request.description,
       orphaned: request.orphaned,
+      capabilities: this.folders.get((request.project ?? "Default").toLowerCase())?.capabilities,
       name: request.name ?? request.command ?? shell,
       project: request.project ?? "Default",
       projectPath: request.projectPath ? path.resolve(request.projectPath) : undefined,
@@ -679,11 +696,11 @@ export class ConsoleManager {
   }
 
   restartProject(project: string): ConsoleRecord[] {
-    return this.itemsForProject(project).map((item) => this.restart(item.record.id));
+    return this.itemsForProject(project).filter((item) => !item.record.readonly).map((item) => this.restart(item.record.id));
   }
 
   restartProjectExceptNoRun(project: string): ConsoleRecord[] {
-    const items = this.itemsForProject(project);
+    const items = this.itemsForProject(project).filter((item) => !item.record.readonly);
     for (const item of items) {
       this.stop(item.record.id);
     }
@@ -692,12 +709,12 @@ export class ConsoleManager {
 
   stopProject(project: string): void {
     for (const item of this.itemsForProject(project)) {
-      this.stop(item.record.id);
+      if (!item.record.readonly) this.stop(item.record.id);
     }
   }
 
   startProject(project: string): ConsoleRecord[] {
-    return this.itemsForProject(project).map((item) => this.start(item.record.id));
+    return this.itemsForProject(project).filter((item) => !item.record.readonly).map((item) => this.start(item.record.id));
   }
 
   markProjectRead(project: string): void {
@@ -798,11 +815,14 @@ export class ConsoleManager {
   private deleteManaged(item: ManagedConsole): void {
     this.consoles.delete(item.record.id);
     item.session?.kill();
+    this.logs.flush(item.record.id);
     if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
     item.mirror.dispose();
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.persist();
     for (const item of [...this.consoles.values()]) this.deleteManaged(item);

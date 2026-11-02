@@ -17,7 +17,7 @@ Deleted slots do not return after a service restart.
   Delete from mywins.json, even for stopped consoles.
 - Delete asks for confirmation naming the console and project directory and
   warning that any running process will be stopped. Cancelling sends no request.
-- Confirmed deletion uses DELETE /api/consoles/:id/mywins, removes the entry from
+- Confirmed deletion uses DELETE /api/consoles/:id/entry with confirmed=true, removes the entry from
   the source file, stops/removes the session and refreshes the list. Both
   mywins.json and the legacy my_wins.json filename are supported.
 - Other entries and top-level configuration fields remain intact. Reloading the
