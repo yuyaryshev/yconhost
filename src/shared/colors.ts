@@ -27,3 +27,18 @@ export function colorHex(value: string, theme: "dark" | "light" = "dark"): strin
   const rgb = colorRgb(value, theme) ?? [17, 19, 22];
   return `#${rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
+
+export function readableForeground(background: string): string | undefined {
+  const rgb = colorRgb(background);
+  if (!rgb) return undefined;
+  const luminance = (channels: number[]) => channels.map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+  const level = luminance(rgb);
+  const contrast = (color: string) => {
+    const foreground = luminance(colorRgb(color)!);
+    return (Math.max(level, foreground) + 0.05) / (Math.min(level, foreground) + 0.05);
+  };
+  return contrast("#e8ecef") > contrast("#1c2329") ? "#e8ecef" : "#1c2329";
+}

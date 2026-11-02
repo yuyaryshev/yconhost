@@ -9,6 +9,7 @@ import { Terminal } from "@xterm/xterm";
 import { selectProjectConsoles } from "./projectConsoles.js";
 import { isWindowsTerminalReply } from "./terminalInput.js";
 import { unreadCards } from "./cards.js";
+import { readableForeground } from "../shared/colors.js";
 import type { NativeWindowState, ProjectSummary } from "../server/types.js";
 import type { FolderCapabilities } from "../server/folderTypes.js";
 import { FolderEntryDialog, FolderSettingsDialog, requestJson } from "./FolderDialogs.js";
@@ -851,7 +852,7 @@ function ConsoleRow({
   const canClose = !item.readonly && (isDefault || (item.status !== "idle" && item.status !== "exited"));
   const labelColor = item.backgroundColor?.[theme] ?? item.background;
   return (
-    <div className={`console-row ${active ? "active" : ""}`} style={{ "--console-label-bg": labelColor } as React.CSSProperties} onClick={onSelect}>
+    <div className={`console-row ${active ? "active" : ""}`} style={{ "--console-label-bg": labelColor, "--console-label-fg": readableForeground(labelColor ?? terminalThemes[theme].background) } as React.CSSProperties} onClick={onSelect}>
       <span className={`status ${item.status}`}>{consoleStatusGlyph(item.status)}</span>
       <span className="console-title" title={item.description}>{item.name}{item.orphaned ? " (orphaned)" : ""}</span>
       {showErrorBadge ? <span className="badge">{item.unseenErrorCount}</span> : null}

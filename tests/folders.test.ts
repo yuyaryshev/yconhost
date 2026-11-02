@@ -13,7 +13,7 @@ import { LogStore } from "../src/server/logStore.js";
 import { ProjectStore } from "../src/server/projectStore.js";
 import { loadSettings } from "../src/server/settings.js";
 import { FakeTerminalFactory } from "../src/server/terminal.js";
-import { colorHex, resolveConsoleBackground, standardColors } from "../src/shared/colors.js";
+import { colorHex, readableForeground, resolveConsoleBackground, standardColors } from "../src/shared/colors.js";
 import { configureCodexFixture } from "./folderFixtures.js";
 
 describe("Generic folders", () => {
@@ -307,7 +307,8 @@ describe("Generic folders", () => {
     expect(folders.get("wins").type).toBe("my_wins");
     expect(manager.list("wins")).toEqual([expect.objectContaining({ id: canonical.id, command: "echo build" })]);
     for (const name of ["Context", "Missing"]) {
-      expect(folders.get(name)).toMatchObject({ type: "manual", error: undefined });
+      expect(folders.get(name).type).toBe("manual");
+      expect(folders.get(name).error).toBeUndefined();
       expect(manager.list(name)).toHaveLength(1);
     }
     folders.dispose();
@@ -426,6 +427,9 @@ it("resolves all standard colors consistently without losing named presets", () 
   expect(resolveConsoleBackground("STD_GREY")).toEqual(resolveConsoleBackground("STD_WHITE"));
   expect(colorHex("STD_CYAN")).toBe("#0c1414");
   expect(resolveConsoleBackground("rgb(256, 0, 0)")).toBeUndefined();
+  expect(readableForeground("#000032")).toBe("#e8ecef");
+  expect(readableForeground("rgb(255, 247, 247)")).toBe("#1c2329");
+  expect(readableForeground("invalid")).toBeUndefined();
 });
 
 it("rejects missing list entry points without leaving a running worker", async () => {

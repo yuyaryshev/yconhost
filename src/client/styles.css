@@ -286,6 +286,7 @@ h2 {
 }
 
 .console-row {
+  --text-muted: var(--console-label-fg);
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto auto;
   align-items: center;
@@ -296,6 +297,7 @@ h2 {
   border-left: 5px solid var(--console-label-bg, transparent);
   border-radius: 6px;
   background: var(--console-label-bg, var(--terminal-bg));
+  color: var(--console-label-fg, var(--text));
   text-align: left;
   cursor: pointer;
 }
