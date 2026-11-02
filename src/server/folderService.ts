@@ -31,7 +31,7 @@ export class FolderService {
     for (const name of names) {
       const previous = saved.find((item) => item.name.toLowerCase() === name.toLowerCase());
       const projectPath = previous?.projectPath ?? manager.list(name).find((item) => item.projectPath)?.projectPath;
-      this.addState({ ...previous, name, id: previous?.id ?? crypto.randomUUID(), type: previous?.type ?? (projectPath ? "my_wins" : "manual"),
+      this.addState({ ...previous, name, id: previous?.id ?? crypto.randomUUID(), type: previous?.type ?? this.legacyType(name, projectPath),
         projectPath, intervalSeconds: previous?.intervalSeconds ?? 60, closeRemoves: previous?.closeRemoves ?? name === "Default",
         gatherErrors: previous?.gatherErrors ?? true, capabilities: previous?.type === "scripted" ? { ...noCapabilities } : { ...editable } });
     }
@@ -43,7 +43,8 @@ export class FolderService {
   adoptRegistry(): void {
     for (const project of this.store.listManagedProjects()) {
       const state = this.states.get(project.name.toLowerCase());
-      const info: FolderInfo = { ...state?.info, ...project, id: project.id ?? state?.info.id ?? crypto.randomUUID(), type: project.type ?? "manual", capabilities: project.type === "scripted" ? { ...noCapabilities } : { ...editable } };
+      const type = project.type ?? state?.info.type ?? this.legacyType(project.name, project.projectPath);
+      const info: FolderInfo = { ...state?.info, ...project, id: project.id ?? state?.info.id ?? crypto.randomUUID(), type, capabilities: type === "scripted" ? { ...noCapabilities } : { ...editable } };
       if (state) this.stopState(state);
       this.addState(info);
     }
@@ -231,8 +232,15 @@ export class FolderService {
   async ensureManual(project: string): Promise<void> {
     const state = this.states.get(project.toLowerCase());
     if (!state) { await this.configure({ name: project, type: "manual" }); return; }
-    if (state.info.type !== "manual") throw new Error("Use create_folder_entry for source-controlled folders");
+    if (state.info.type !== "manual") throw new Error(this.sourceWriteWarning(project) ?? "Use create_folder_entry for source-controlled folders; use a separate manual project for temporary sessions");
     this.persist(state);
+  }
+
+  sourceWriteWarning(project: string): string | undefined {
+    const info = this.require(project).info;
+    if (info.type !== "my_wins") return undefined;
+    const file = ["mywins.json", "my_wins.json"].map((name) => path.join(info.projectPath!, name)).find((candidate) => fs.existsSync(candidate)) ?? path.join(info.projectPath!, "mywins.json");
+    return `WARNING: Changing entries in folder ${JSON.stringify(info.name)} writes the source file ${file}. Prefer editing this file directly, then call reload_project_config. For temporary sessions, create a separate manual project with create_project(type="manual") and use create_console/register_console there; do not add them to this file-backed folder.`;
   }
 
   setGatherErrors(project: string, enabled: boolean): void {
@@ -250,12 +258,19 @@ export class FolderService {
     this.manager.setFolderState(info);
   }
 
+  private legacyType(project: string, projectPath?: string): "manual" | "my_wins" {
+    // projectPath can be only the working context of an MCP-created manual slot.
+    const fileBacked = projectPath && this.manager.list(project).some((item) => item.projectPath &&
+      path.resolve(item.projectPath).toLowerCase() === path.resolve(projectPath).toLowerCase() && /^batch-[a-f0-9]{40}$/.test(item.id));
+    return fileBacked ? "my_wins" : "manual";
+  }
+
   private require(project: string): State {
     let state = this.states.get(project.toLowerCase()) ?? [...this.states.values()].find((item) => item.info.id === project);
     if (!state) {
       const legacy = this.manager.listProjects().find((item) => item.name.toLowerCase() === project.toLowerCase());
       if (legacy) {
-        this.addState({ id: crypto.randomUUID(), name: legacy.name, type: legacy.projectPath ? "my_wins" : "manual", projectPath: legacy.projectPath, gatherErrors: legacy.gatherErrors, intervalSeconds: 60, capabilities: { ...editable } });
+        this.addState({ id: crypto.randomUUID(), name: legacy.name, type: this.legacyType(legacy.name, legacy.projectPath), projectPath: legacy.projectPath, gatherErrors: legacy.gatherErrors, intervalSeconds: 60, capabilities: { ...editable } });
         state = this.states.get(legacy.name.toLowerCase());
       }
     }
@@ -323,12 +338,13 @@ export class FolderService {
 
   private validateItems(value: unknown, capabilities: FolderCapabilities): FolderItem[] {
     if (!Array.isArray(value) || value.length > 10000) throw new Error("list must return an array of at most 10000 entries");
-    const keys = new Set<string>();
+    const keys = new Map<string, string>();
     const names = new Set<string>();
     for (const item of value as FolderItem[]) {
       if (!item || typeof item.key !== "string" || !item.key || typeof item.name !== "string" || !item.name.trim()) throw new Error("Each folder entry needs string key and name");
-      if (keys.has(item.key) || names.has(item.name)) throw new Error("Duplicate folder entry key or name");
-      keys.add(item.key); names.add(item.name);
+      if (names.has(item.name)) throw new Error(`Duplicate folder entry name ${JSON.stringify(item.name)}. Give source entries different names; the previous console list was retained.`);
+      if (keys.has(item.key)) throw new Error(`Duplicate folder entry key ${JSON.stringify(item.key)} in ${JSON.stringify(keys.get(item.key))} and ${JSON.stringify(item.name)}. Use unique session IDs/keys; the previous console list was retained.`);
+      keys.set(item.key, item.name); names.add(item.name);
       for (const field of ["command", "cwd", "shell", "description", "background"] as const) if (item[field] !== undefined && typeof item[field] !== "string") throw new Error(`Invalid entry ${field}`);
       if (item.args !== undefined && (!Array.isArray(item.args) || item.args.some((arg) => typeof arg !== "string"))) throw new Error("Invalid entry args");
       for (const field of ["readonly", "noRun", "ansiParserEnabled"] as const) if (item[field] !== undefined && typeof item[field] !== "boolean") throw new Error(`Invalid entry ${field}`);

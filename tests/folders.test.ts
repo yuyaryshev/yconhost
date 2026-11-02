@@ -108,6 +108,12 @@ describe("Generic folders", () => {
     await expect(folders.listFolder("custom")).rejects.toThrow("Duplicate");
     expect(manager.list("custom")[0].id).toBe(before);
     expect(folders.get("custom").error).toContain("Duplicate");
+    expect(folders.get("custom").error).toContain('"duplicate"');
+    expect(folders.get("custom").error).toContain('"A" and "B"');
+    const projects = await request(app).get("/api/projects").expect(200);
+    expect(projects.body.projects.find((project: { name: string }) => project.name === "custom").error).toContain('"duplicate"');
+    fs.writeFileSync(dataFile, JSON.stringify([{ key: "a", name: "Same" }, { key: "b", name: "Same" }]));
+    await expect(folders.listFolder("custom")).rejects.toThrow('Duplicate folder entry name "Same"');
     fs.writeFileSync(scriptPath, "export function list() { while (true) {} }");
     await expect(folders.listFolder("custom", true)).rejects.toThrow("timed out");
     expect(manager.list("custom")[0].id).toBe(before);
@@ -233,6 +239,96 @@ describe("Generic folders", () => {
     expect(manager.readOutput(record.id)).toContain("retain this log");
     expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({ unrelated: 42, wins: { After: { cmd: "echo new" } } });
     expect(factory.sessions).toHaveLength(1);
+  });
+
+  it("warns and refuses MCP file changes without explicit source-write confirmation", async () => {
+    const projectPath = path.join(dir, "file-backed");
+    fs.mkdirSync(projectPath);
+    const file = path.join(projectPath, "my_wins.json");
+    fs.writeFileSync(file, JSON.stringify({ wins: { Build: { cmd: "echo build" } } }));
+    await folders.configure({ name: "Builds", type: "my_wins", projectPath, intervalSeconds: 0 });
+    const record = manager.list("Builds")[0];
+    const form = await folders.entry("Builds", record.id);
+    const before = fs.readFileSync(file, "utf8");
+    const call = (name: string, args: object) => request(app).post("/mcp").send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }).expect(200);
+    for (const [name, args] of [
+      ["create_console", { project: "Builds", name: "Temp" }],
+      ["register_console", { project: "Builds", name: "Temp" }],
+      ["create_folder_entry", { project: "Builds", values: { name: "Temp" } }],
+      ["update_folder_entry", { id: record.id, values: { ...form.values, command: "echo changed" } }],
+      ["delete_folder_entry", { id: record.id, confirmed: true }]
+    ] as const) {
+      const refused = await call(name, args);
+      expect(refused.body.result.isError).toBe(true);
+      const warning = refused.body.result.content[0].text;
+      expect(warning).toContain("WARNING");
+      expect(warning).toContain(file);
+      expect(warning).toContain("editing this file directly");
+      expect(warning).toContain("separate manual project");
+      expect(fs.readFileSync(file, "utf8")).toBe(before);
+    }
+    const schema = await request(app).post("/mcp").send({ jsonrpc: "2.0", id: 2, method: "tools/list" }).expect(200);
+    for (const name of ["create_folder_entry", "update_folder_entry", "delete_folder_entry"]) {
+      const tool = schema.body.result.tools.find((item: { name: string }) => item.name === name);
+      expect(tool.description).toContain("prefer editing the file directly");
+      expect(tool.inputSchema.properties.confirmSourceWrite.type).toBe("boolean");
+    }
+    const fields = await call("get_folder_fields", { project: "Builds", id: record.id });
+    expect(JSON.parse(fields.body.result.content[0].text).sourceWriteWarning).toContain(file);
+    const invalid = await call("create_folder_entry", { project: "Builds", values: { name: "Temp" }, confirmSourceWrite: "true" });
+    expect(invalid.body.result.isError).toBe(true);
+    const created = await call("create_folder_entry", { project: "Builds", values: { name: "Added", command: "echo added" }, confirmSourceWrite: true });
+    expect(created.body.result.isError).not.toBe(true);
+    const updated = await call("update_folder_entry", { id: record.id, values: { ...form.values, command: "echo changed" }, revision: form.revision, confirmSourceWrite: true });
+    expect(updated.body.result.isError).not.toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).wins.Build.cmd).toBe("echo changed");
+    const removed = await call("delete_folder_entry", { id: record.id, confirmed: true, confirmSourceWrite: true });
+    expect(removed.body.result.isError).not.toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).wins.Build).toBeUndefined();
+    await call("create_project", { name: "Tasks", type: "manual" });
+    const temporary = await call("register_console", { project: "Tasks", name: "Temp", cwd: projectPath });
+    expect(JSON.parse(temporary.body.result.content[0].text).persistent).toBe(false);
+    expect(factory.sessions).toHaveLength(0);
+  });
+
+  it("migrates legacy batch folders but keeps MCP working-directory groups manual", async () => {
+    const projectPath = path.join(dir, "wins");
+    fs.mkdirSync(projectPath);
+    fs.writeFileSync(path.join(projectPath, "my_wins.json"), JSON.stringify({ wins: { Build: { cmd: "echo build" } } }));
+    const [canonical] = manager.createBatch(projectPath, undefined, { startNew: false });
+    manager.registerConsole({ project: "wins", projectPath, name: "Build", command: "echo duplicate" });
+    manager.registerConsole({ project: "wins", projectPath, name: "Obsolete" });
+    manager.registerConsole({ project: "Context", projectPath, name: "Task" });
+    manager.registerConsole({ project: "Missing", projectPath: path.join(dir, "no-source"), name: "Task" });
+    folders.dispose();
+    folders = new FolderService(manager);
+    folders.adoptRegistry();
+    await folders.initialize();
+    expect(folders.get("wins").type).toBe("my_wins");
+    expect(manager.list("wins")).toEqual([expect.objectContaining({ id: canonical.id, command: "echo build" })]);
+    for (const name of ["Context", "Missing"]) {
+      expect(folders.get(name)).toMatchObject({ type: "manual", error: undefined });
+      expect(manager.list(name)).toHaveLength(1);
+    }
+    folders.dispose();
+    folders = new FolderService(manager);
+    folders.adoptRegistry();
+    expect(folders.get("wins").type).toBe("my_wins");
+    expect(folders.get("Context").type).toBe("manual");
+    expect(factory.sessions).toHaveLength(0);
+  });
+
+  it("respects explicitly saved manual types even for legacy batch slots", async () => {
+    const projectPath = path.join(dir, "manual-choice");
+    fs.mkdirSync(projectPath);
+    fs.writeFileSync(path.join(projectPath, "mywins.json"), JSON.stringify({ wins: { Build: {} } }));
+    manager.createBatch(projectPath, undefined, { startNew: false });
+    const now = new Date().toISOString();
+    folders.store.saveProject({ name: "manual-choice", type: "manual", createdAt: now, updatedAt: now });
+    folders.dispose();
+    folders = new FolderService(manager);
+    folders.adoptRegistry();
+    expect(folders.get("manual-choice").type).toBe("manual");
   });
 
   it("serializes overlapping mutations and periodically lists without starting commands", async () => {

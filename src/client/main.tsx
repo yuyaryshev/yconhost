@@ -755,7 +755,7 @@ function ProjectHeader({
           </div>
         ) : null}
       </div>
-      {error ? <span className="folder-source-error" title={error} aria-label={`Source error: ${error}`}>!</span> : null}
+      {error ? <div className="folder-source-error" role="alert">Source error: {error}</div> : null}
     </div>
   );
 }

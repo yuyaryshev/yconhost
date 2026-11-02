@@ -295,13 +295,14 @@ h2 {
   padding: 7px 8px;
   border-left: 5px solid var(--console-label-bg, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--console-label-bg, transparent) 14%, transparent);
+  background: var(--console-label-bg, var(--terminal-bg));
   text-align: left;
   cursor: pointer;
 }
 
 .console-row.active {
-  background: color-mix(in srgb, var(--console-label-bg, var(--surface-bg-active)) 28%, var(--surface-bg-active));
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
 }
 
 .console-title {
@@ -788,6 +789,12 @@ h2 {
 .folder-source-error {
   color: var(--danger);
   overflow-wrap: anywhere;
+}
+
+.project-header > .folder-source-error {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .pending-restart {

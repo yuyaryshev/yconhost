@@ -64,4 +64,15 @@ describe("agent context import", () => {
       "ycodex --bypass-safety-y"
     ]);
   });
+
+  it("reports duplicate section names or session keys even when commands are identical", () => {
+    expect(() => load([
+      { name: "Same", code: "claude" },
+      { name: "Same", code: "claude" }
+    ])).toThrow('Duplicate source name "Same"');
+    expect(() => load([
+      { name: "First", code: "ycodex resume repeated-id" },
+      { name: "Second", code: "ycodex resume repeated-id" }
+    ])).toThrow('Duplicate source session/key "repeated-id" in "First" and "Second"');
+  });
 });

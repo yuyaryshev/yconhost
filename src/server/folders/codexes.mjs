@@ -56,8 +56,19 @@ export function createCodexFolder(config) {
     defineFields: () => fields,
     list: () => {
       const text = read();
+      const items = all(text);
+      const names = new Set();
+      const keys = new Map();
+      // Validate before command deduplication so identical commands cannot hide source conflicts.
+      for (const item of items) {
+        const key = item.session_id || item.name;
+        if (names.has(item.name)) throw new Error(`Duplicate source name ${JSON.stringify(item.name)}. Rename one of the source sections; the previous console list was retained.`);
+        if (keys.has(key)) throw new Error(`Duplicate source session/key ${JSON.stringify(key)} in ${JSON.stringify(keys.get(key))} and ${JSON.stringify(item.name)}. Correct the source session IDs; the previous console list was retained.`);
+        names.add(item.name);
+        keys.set(key, item.name);
+      }
       const seen = new Set();
-      return all(text).filter((item) => {
+      return items.filter((item) => {
         if (seen.has(item.command)) return false;
         seen.add(item.command);
         return true;
