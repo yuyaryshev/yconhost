@@ -6,10 +6,16 @@ import { LogStore } from "./logStore.js";
 import { ProjectStore } from "./projectStore.js";
 import { loadSettings } from "./settings.js";
 import { PtyTerminalFactory } from "./terminal.js";
+import { FolderService } from "./folderService.js";
+import { migrateBuiltinFolders } from "./folderMigration.js";
 
 const settings = loadSettings();
 const manager = new ConsoleManager(settings, new LogStore(settings), new PtyTerminalFactory(), new ConsoleStore(settings), new ProjectStore(settings));
-const app = createApp(manager);
+const folders = new FolderService(manager);
+await migrateBuiltinFolders(folders, settings);
+folders.adoptRegistry();
+await folders.initialize();
+const app = createApp(manager, { folders });
 const server = http.createServer(app);
 const wss = attachWebSocket(server, manager);
 
@@ -17,6 +23,7 @@ let shuttingDown = false;
 function shutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
+  folders.dispose();
   manager.dispose();
   for (const client of wss.clients) client.terminate();
   wss.close();

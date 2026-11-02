@@ -18,7 +18,12 @@ export class ConsoleStore {
   }
 
   save(records: ConsoleRecord[]): void {
-    const definitions: ConsoleDefinition[] = records.map((record) => ({
+    const definitions: ConsoleDefinition[] = records.filter((record) => !record.readonly).map((record) => ({
+      folderId: record.folderId,
+      sourceKey: record.sourceKey,
+      sourceValues: record.sourceValues,
+      description: record.description,
+      orphaned: record.orphaned,
       id: record.id,
       lastStartedAt: record.lastStartedAt,
       createdAt: record.createdAt,

@@ -1,3 +1,5 @@
+import type { FolderCapabilities, FolderType, SourceMetadata } from "./folderTypes.js";
+
 export type ConsoleStatus = "idle" | "starting" | "running" | "ready" | "exited";
 
 export interface NativeWindowState {
@@ -7,7 +9,7 @@ export interface NativeWindowState {
   rows: number;
 }
 
-export interface ConsoleCreateRequest {
+export interface ConsoleCreateRequest extends SourceMetadata {
   lastStartedAt?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -37,7 +39,7 @@ export interface ConsoleRegisterRequest extends ConsoleCreateRequest {
   start?: boolean;
 }
 
-export interface ConsoleDefinition {
+export interface ConsoleDefinition extends SourceMetadata {
   lastStartedAt?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -63,7 +65,7 @@ export interface ConsoleDefinition {
   readCardHashes?: string[];
 }
 
-export interface ConsoleRecord {
+export interface ConsoleRecord extends SourceMetadata {
   lastStartedAt?: string;
   id: string;
   name: string;
@@ -93,7 +95,8 @@ export interface ConsoleRecord {
   backgroundColor?: ThemeColorPair;
   exitCode?: number;
   readonly?: boolean;
-  source?: "managed" | "pm2";
+  source?: "managed" | "external";
+  capabilities?: FolderCapabilities;
   nativeCli?: NativeWindowState;
 }
 
@@ -109,6 +112,10 @@ export interface ConsoleSessionState extends ConsoleRecord {
 }
 
 export interface ProjectSummary {
+  id?: string;
+  type?: FolderType;
+  capabilities?: FolderCapabilities;
+  error?: string;
   gatherErrors: boolean;
   isLarge: boolean;
   name: string;
@@ -120,6 +127,12 @@ export interface ProjectSummary {
 }
 
 export interface ManagedProject {
+  id?: string;
+  type?: FolderType;
+  projectPath?: string;
+  scriptPath?: string;
+  intervalSeconds?: number;
+  closeRemoves?: boolean;
   gatherErrors?: boolean;
   name: string;
   createdAt: string;

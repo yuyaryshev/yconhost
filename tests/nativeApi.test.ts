@@ -20,7 +20,7 @@ function setup() {
   };
   const factory = new FakeTerminalFactory();
   const manager = new ConsoleManager(settings, new LogStore(settings), factory);
-  return { settings, factory, manager, app: createApp(manager, { pm2: false }), dataDir };
+  return { settings, factory, manager, app: createApp(manager), dataDir };
 }
 
 it("exposes actual native state, rejects unsupported sessions and clears state on close", async () => {

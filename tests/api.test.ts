@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/server/api.js";
 import { ConsoleManager } from "../src/server/consoleManager.js";
 import { ConsoleStore } from "../src/server/consoleStore.js";
@@ -10,6 +10,7 @@ import { LogStore } from "../src/server/logStore.js";
 import { ProjectStore } from "../src/server/projectStore.js";
 import { buildTerminalEnv, mergeWindowsEnvironment, FakeTerminalFactory } from "../src/server/terminal.js";
 import type { AppSettings } from "../src/server/types.js";
+import { configureCodexFixture } from "./folderFixtures.js";
 
 function testSettings(dataDir: string): AppSettings {
   return {
@@ -61,8 +62,10 @@ describe("HTTP API", () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "yconhost-"));
     factory = new FakeTerminalFactory();
     manager = new ConsoleManager(testSettings(dir), new LogStore(testSettings(dir)), factory);
-    app = createApp(manager, { pm2: false });
+    app = createApp(manager);
   });
+
+  afterEach(() => { app.locals.folders.dispose(); manager.dispose(); });
 
   it("reports health", async () => {
     const response = await request(app).get("/api/health").expect(200);
@@ -160,7 +163,7 @@ describe("HTTP API", () => {
     const store = new ConsoleStore(settings);
     const terminalFactory = new FakeTerminalFactory();
     const stored = new ConsoleManager(settings, new LogStore(settings), terminalFactory, store);
-    const storedApp = createApp(stored, { pm2: false });
+    const storedApp = createApp(stored);
     let restored: ConsoleManager | undefined;
     try {
       const idle = stored.registerConsole({ project: "Default", name: "idle", persistent: true });
@@ -213,7 +216,7 @@ describe("HTTP API", () => {
     const settings = testSettings(dir);
     const storedFactory = new FakeTerminalFactory();
     const stored = new ConsoleManager(settings, new LogStore(settings), storedFactory, new ConsoleStore(settings));
-    const storedApp = createApp(stored, { pm2: false });
+    const storedApp = createApp(stored);
     let restored: ConsoleManager | undefined;
     try {
       const first = stored.create({ name: "first", project: "read-project", cwd: dir });
@@ -276,7 +279,7 @@ describe("HTTP API", () => {
     fs.writeFileSync(path.join(dir, "my_wins.json"), JSON.stringify({ wins: { one: { cmd: "npm run one" }, two: { cmd: "npm run two" } } }), "utf8");
     const settings = testSettings(dir);
     const projectManager = new ConsoleManager(settings, new LogStore(settings), factory, undefined, new ProjectStore(settings));
-    const projectApp = createApp(projectManager, { pm2: false });
+    const projectApp = createApp(projectManager);
 
     const opened = await request(projectApp).post("/api/batch").send({ projectPath: dir }).expect(200);
     expect(opened.body).toHaveLength(2);
@@ -319,7 +322,7 @@ describe("HTTP API", () => {
     const projectStore = new ProjectStore(settings);
     const managedFactory = new FakeTerminalFactory();
     const managedManager = new ConsoleManager(settings, new LogStore(settings), managedFactory, undefined, projectStore);
-    const managedApp = createApp(managedManager, { pm2: false });
+    const managedApp = createApp(managedManager);
 
     const project = await request(managedApp).post("/api/projects").send({ name: "mcp_project" }).expect(200);
     expect(project.body).toMatchObject({ name: "mcp_project" });
@@ -348,7 +351,7 @@ describe("HTTP API", () => {
     settings.temporaryConsoles.ttlHours = 4;
     const managedFactory = new FakeTerminalFactory();
     const managedManager = new ConsoleManager(settings, new LogStore(settings), managedFactory, undefined, new ProjectStore(settings));
-    const managedApp = createApp(managedManager, { pm2: false });
+    const managedApp = createApp(managedManager);
 
     const temporary = await request(managedApp)
       .post("/mcp")
@@ -440,11 +443,14 @@ describe("HTTP API", () => {
     const settings = testSettings(dir);
     const managedFactory = new FakeTerminalFactory();
     const managedManager = new ConsoleManager(settings, new LogStore(settings), managedFactory, undefined, new ProjectStore(settings));
-    const managedApp = createApp(managedManager, { pm2: false });
+    const managedApp = createApp(managedManager);
 
+    await configureCodexFixture(managedApp.locals.folders, settings);
     expect(managedManager.list("codexes")).toHaveLength(3);
     expect(managedFactory.sessions).toHaveLength(0);
-    const imported = await request(managedApp).post("/api/codex-contexts/import").send({}).expect(200);
+    const listed = await request(managedApp).post("/api/projects/codexes/list").send({}).expect(200);
+    const imported = { body: { project: "codexes", imported: listed.body.length, consoles: listed.body } };
+    await request(managedApp).post("/api/codex-contexts/import").send({}).expect(404);
     expect(imported.body).toMatchObject({ project: "codexes", imported: 3 });
     expect(imported.body.consoles.map((item: { name: string }) => item.name)).toEqual(["stable", "Dynamic context", "khb_microservices_claude"]);
     expect(imported.body.consoles[0]).toMatchObject({ status: "idle", noRun: true, persistent: true, background: "#000032" });
@@ -467,17 +473,19 @@ describe("HTTP API", () => {
     expect(launchedAt).toBeTruthy();
 
     const tools = await request(managedApp).post("/mcp").send({ method: "tools/list" }).expect(200);
-    expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toContain("import_codex_contexts");
-    expect(tools.body.tools.find((tool: { name: string }) => tool.name === "import_codex_contexts").description).toContain("Claude");
+    expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toContain("list_folder");
+    expect(tools.body.tools.map((tool: { name: string }) => tool.name)).not.toContain("import_codex_contexts");
 
     const mcpImport = await request(managedApp)
       .post("/mcp")
-      .send({ method: "tools/call", params: { name: "import_codex_contexts", arguments: { project: "codexes" } } })
+      .send({ method: "tools/call", params: { name: "list_folder", arguments: { project: "codexes" } } })
       .expect(200);
-    expect(JSON.parse(mcpImport.body.content[0].text)).toMatchObject({ project: "codexes", imported: 3 });
+    expect(JSON.parse(mcpImport.body.content[0].text)).toHaveLength(3);
     expect(managedManager.list("codexes").map((item) => item.id)).toEqual(imported.body.consoles.map((item: { id: string }) => item.id));
     expect(managedManager.list("codexes")[0].lastStartedAt).toBe(launchedAt);
     expect(managedFactory.sessions).toHaveLength(1);
+    managedApp.locals.folders.dispose();
+    managedManager.dispose();
   });
 
   it("persists renamed console definitions across manager restart by recreating them", async () => {
@@ -509,7 +517,7 @@ describe("HTTP API", () => {
 
     const tools = await request(app).post("/mcp").send({ method: "tools/list" }).expect(200);
     expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toContain("list_consoles");
-    expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(["create_console", "close_console", "restart_console", "restart_project_except_no_run", "send_console_command", "run_console_command", "get_console_state", "import_codex_contexts"]));
+    expect(tools.body.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(["create_console", "close_console", "restart_console", "restart_project_except_no_run", "send_console_command", "run_console_command", "get_console_state", "list_folder"]));
     expect(tools.body.tools.find((tool: { name: string }) => tool.name === "run_console_command").description).toContain("wait");
     expect(tools.body.tools.find((tool: { name: string }) => tool.name === "get_console_state").description).toContain("last input");
 

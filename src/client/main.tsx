@@ -9,7 +9,9 @@ import { Terminal } from "@xterm/xterm";
 import { selectProjectConsoles } from "./projectConsoles.js";
 import { isWindowsTerminalReply } from "./terminalInput.js";
 import { unreadCards } from "./cards.js";
-import type { NativeWindowState } from "../server/types.js";
+import type { NativeWindowState, ProjectSummary } from "../server/types.js";
+import type { FolderCapabilities } from "../server/folderTypes.js";
+import { FolderEntryDialog, FolderSettingsDialog, requestJson } from "./FolderDialogs.js";
 
 type ConsoleRecord = {
   id: string;
@@ -35,18 +37,13 @@ type ConsoleRecord = {
   backgroundColor?: { dark: string; light: string };
   pid?: number;
   readonly?: boolean;
-  source?: "managed" | "pm2";
+  source?: "managed" | "external";
+  sourceKey?: string;
+  orphaned?: boolean;
+  pendingRestart?: boolean;
+  description?: string;
+  capabilities?: FolderCapabilities;
   nativeCli?: NativeWindowState;
-};
-
-type MywinsEntry = {
-  name: string;
-  cmd?: string;
-  command?: string;
-  cwd?: string;
-  no_run?: boolean;
-  ansiParserEnabled?: boolean;
-  background?: string;
 };
 
 type ErrorMatch = {
@@ -100,7 +97,7 @@ const terminalThemes: Record<AppTheme, { background: string; foreground: string;
 
 function App() {
   const [consoles, setConsoles] = useState<ConsoleRecord[]>([]);
-  const [projectDefaults, setProjectDefaults] = useState<Record<string, boolean>>({});
+  const [projectInfos, setProjectInfos] = useState<ProjectSummary[]>([]);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [shellChoice, setShellChoice] = useState("cmd.exe");
@@ -115,17 +112,17 @@ function App() {
   const [debugMode, setDebugMode] = useState(false);
   const [settings, setSettings] = useState<AppSettings>();
   const [serverAlive, setServerAlive] = useState(false);
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set(["pm2"]));
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const knownProjects = useRef(new Set<string>());
   const scrollRef = useRef<HTMLDivElement>(null);
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
   const advancedDialog = useDialogStore();
   const folderDialog = useDialogStore();
   const preferencesDialog = useDialogStore();
-  const mywinsDialog = useDialogStore();
-  const addMywinsDialog = useDialogStore();
-  const [mywinsConsoleId, setMywinsConsoleId] = useState<string>();
-  const [addMywinsProject, setAddMywinsProject] = useState<string>();
+  const entryDialog = useDialogStore();
+  const folderSettingsDialog = useDialogStore();
+  const [entryTarget, setEntryTarget] = useState<{ project: string; id?: string; version: number }>();
+  const [folderSettingsTarget, setFolderSettingsTarget] = useState<{ project?: string; version: number }>();
   const selected = consoles.find((item) => item.id === selectedId);
 
   useEffect(() => {
@@ -178,11 +175,9 @@ function App() {
     const data = (await response.json()) as { consoles: ConsoleRecord[] };
     setConsoles(data.consoles);
     const projectsResponse = await fetch("/api/projects");
-    if (projectsResponse.ok) {
-      const projectData = await projectsResponse.json() as { projects: Array<{ name: string; gatherErrors?: boolean }> };
-      setProjectDefaults(Object.fromEntries(projectData.projects.map((project) => [project.name, project.gatherErrors !== false])));
-    }
-    const names = new Set(["Default", ...data.consoles.map((item) => item.project)]);
+    const projectData = projectsResponse.ok ? await projectsResponse.json() as { projects: ProjectSummary[] } : { projects: [] };
+    setProjectInfos(projectData.projects);
+    const names = new Set([...projectData.projects.map((item) => item.name), ...data.consoles.map((item) => item.project)]);
     const newNames = [...names].filter((name) => !knownProjects.current.has(name));
     if (names.size > 3 && newNames.length > 0) {
       setCollapsedProjects((current) => new Set([...current, ...newNames]));
@@ -324,83 +319,36 @@ function App() {
 
   async function runProjectAction(project: string, action: "restart" | "restart-except-no-run" | "stop" | "start" | "reload" | "read") {
     const response = await fetch(`/api/projects/${encodeURIComponent(project)}/${action}`, { method: "POST" });
-    if (response.ok) await refresh();
-  }
-
-  async function importCodexContexts() {
-    const response = await fetch("/api/codex-contexts/import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      window.alert(body.error ?? "Failed to import Codex contexts");
-      return;
-    }
-    const result = (await response.json()) as { project: string; imported: number; consoles: ConsoleRecord[] };
-    setMenuOpen(false);
-    setThemeMenuOpen(false);
-    setCollapsedProjects((current) => {
-      const next = new Set(current);
-      next.delete(result.project);
-      return next;
-    });
-    setSelectedId(result.consoles[0]?.id);
+    if (!response.ok) window.alert((await response.json()).error ?? "Folder operation failed");
     await refresh();
   }
 
-  function openAddMywins(project: string) {
-    setAddMywinsProject(project);
-    addMywinsDialog.show();
+  function openFolderSettings(project?: string) {
+    setFolderSettingsTarget({ project, version: Date.now() });
+    folderSettingsDialog.show();
   }
 
-  function openEditMywins(id: string) {
-    setMywinsConsoleId(id);
-    mywinsDialog.show();
+  function openAddEntry(project: string) {
+    setEntryTarget({ project, version: Date.now() });
+    entryDialog.show();
   }
 
-  async function saveConsoleMywins(id: string, entry: MywinsEntry) {
-    const response = await fetch(`/api/consoles/${id}/mywins`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(entry)
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      window.alert(body.error ?? "Failed to save mywins.json");
-      return;
-    }
-    mywinsDialog.hide();
-    await refresh();
-  }
-
-  async function addConsoleToMywins(project: string, entry: MywinsEntry) {
-    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/mywins`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(entry)
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      window.alert(body.error ?? "Failed to update mywins.json");
-      return;
-    }
-    addMywinsDialog.hide();
-    await refresh();
-  }
-
-  async function deleteConsoleFromMywins(id: string) {
+  function openEditEntry(id: string) {
     const record = consoles.find((item) => item.id === id);
-    if (!record?.projectPath) return;
-    if (!window.confirm(`Delete "${record.name}" from the project's mywins.json?\nProject: ${record.projectPath}\nThe console will be removed and its running process, if any, stopped.`)) return;
-    const response = await fetch(`/api/consoles/${id}/mywins`, { method: "DELETE" });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      window.alert(body.error ?? "Failed to delete from mywins.json");
-      return;
-    }
-    await refresh();
+    if (!record) return;
+    setEntryTarget({ project: record.project, id, version: Date.now() });
+    entryDialog.show();
+  }
+
+  async function deleteEntry(id: string) {
+    const record = consoles.find((item) => item.id === id);
+    if (!record) return;
+    const source = projectInfos.find((item) => item.name === record.project);
+    if (source?.type !== "manual" && !window.confirm(`Delete/disable "${record.name}" in its source?\nIts running process will be stopped after the source is saved.`)) return;
+    try {
+      await requestJson(`/api/consoles/${id}/entry`, "DELETE", { confirmed: true });
+      await refresh();
+    } catch (error) { window.alert((error as Error).message); }
   }
 
   async function removeRecentProject(projectPath: string) {
@@ -413,9 +361,9 @@ function App() {
   }
 
   const projects = useMemo(() => {
-    const names = new Set(["Default", ...consoles.map((item) => item.project)]);
+    const names = new Set([...projectInfos.map((item) => item.name), ...consoles.map((item) => item.project)]);
     return [...names].map((project) => ({ project, consoles: consoles.filter((item) => item.project === project) }));
-  }, [consoles]);
+  }, [consoles, projectInfos]);
   const filteredRecentProjects = useMemo(() => {
     const query = folderPath.trim().toLowerCase();
     if (!query) return recentProjects;
@@ -497,7 +445,7 @@ function App() {
                   >
                     Create...
                   </button>
-                  <button onClick={() => void importCodexContexts()}>Import Codex contexts</button>
+                  <button onClick={() => { setMenuOpen(false); openFolderSettings(); }}>New folder...</button>
                   <button
                     onClick={() => {
                       setMenuOpen(false);
@@ -523,9 +471,12 @@ function App() {
                   <ProjectHeader
                     project={group.project}
                     collapsed={collapsedProjects.has(group.project)}
-                    readonly={group.project === "pm2"}
-                    canReload={group.consoles.some((item) => item.projectPath)}
-                    gatherErrors={projectDefaults[group.project] ?? true}
+                    readonly={group.consoles.length > 0 && group.consoles.every((item) => item.readonly)}
+                    canReload={projectInfos.find((item) => item.name === group.project)?.type !== "manual"}
+                    canCreate={projectInfos.find((item) => item.name === group.project)?.capabilities?.create !== false}
+                    error={projectInfos.find((item) => item.name === group.project)?.error}
+                    onSettings={() => openFolderSettings(group.project)}
+                    gatherErrors={projectInfos.find((item) => item.name === group.project)?.gatherErrors ?? true}
                     onGatherErrors={(enabled) => setProjectGatherErrors(group.project, enabled)}
                     onToggleCollapsed={() => toggleProjectCollapsed(group.project)}
                     onClose={closeProject}
@@ -535,10 +486,10 @@ function App() {
                     onStart={() => runProjectAction(group.project, "start")}
                     onReload={() => runProjectAction(group.project, "reload")}
                     onMarkRead={() => runProjectAction(group.project, "read")}
-                    onAddConsole={() => openAddMywins(group.project)}
+                    onAddConsole={() => openAddEntry(group.project)}
                   />
                   {!collapsedProjects.has(group.project) ? (
-                    <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} onEditConfig={openEditMywins} onDeleteConfig={deleteConsoleFromMywins} />
+                    <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} onEditConfig={openEditEntry} onDeleteConfig={deleteEntry} />
                   ) : null}
                 </section>
               ))}
@@ -558,8 +509,8 @@ function App() {
                 onRename={renameConsole}
                 onClose={() => closeConsole(selected.id)}
                 onMarkRead={() => markConsoleRead(selected.id)}
-                onEditConfig={() => openEditMywins(selected.id)}
-                onDeleteConfig={() => deleteConsoleFromMywins(selected.id)}
+                onEditConfig={() => openEditEntry(selected.id)}
+                onDeleteConfig={() => deleteEntry(selected.id)}
               />
             ) : (
               <div className="blank">Select or create a console</div>
@@ -645,92 +596,9 @@ function App() {
           }}
         />
       ) : null}
-      {mywinsConsoleId ? (
-        <MywinsEntryDialog
-          dialog={mywinsDialog}
-          title="Console settings"
-          loadUrl={`/api/consoles/${mywinsConsoleId}/mywins`}
-          onSave={(entry) => saveConsoleMywins(mywinsConsoleId, entry)}
-        />
-      ) : null}
-      {addMywinsProject ? (
-        <MywinsEntryDialog
-          dialog={addMywinsDialog}
-          title="Add console"
-          initial={{ name: "", cmd: "", cwd: "", background: "" }}
-          onSave={(entry) => addConsoleToMywins(addMywinsProject, entry)}
-        />
-      ) : null}
+      {entryTarget ? <FolderEntryDialog key={entryTarget.version} dialog={entryDialog} project={entryTarget.project} id={entryTarget.id} theme={theme} onSaved={refresh} /> : null}
+      {folderSettingsTarget ? <FolderSettingsDialog key={folderSettingsTarget.version} dialog={folderSettingsDialog} project={folderSettingsTarget.project} onSaved={refresh} /> : null}
     </main>
-  );
-}
-
-function MywinsEntryDialog({
-  dialog,
-  title,
-  loadUrl,
-  initial,
-  onSave
-}: {
-  dialog: ReturnType<typeof useDialogStore>;
-  title: string;
-  loadUrl?: string;
-  initial?: MywinsEntry;
-  onSave: (entry: MywinsEntry) => Promise<void>;
-}) {
-  const empty: MywinsEntry = { name: "", cmd: "", cwd: "", background: "", no_run: false, ansiParserEnabled: true };
-  const [draft, setDraft] = useState<MywinsEntry>(initial ?? empty);
-
-  useEffect(() => {
-    if (!loadUrl) {
-      setDraft(initial ?? empty);
-      return;
-    }
-    fetch(loadUrl)
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to load mywins.json entry");
-        return response.json();
-      })
-      .then((entry: MywinsEntry) => setDraft({ ...empty, ...entry, cmd: entry.cmd ?? entry.command ?? "" }))
-      .catch((error: Error) => window.alert(error.message));
-  }, [loadUrl]);
-
-  return (
-    <Dialog store={dialog} className="dialog preferences-dialog" backdrop={<div className="backdrop" />}>
-      <DialogHeading className="dialog-title">{title}</DialogHeading>
-      <div className="settings-grid">
-        <label>
-          Name
-          <input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
-        </label>
-        <label>
-          Background
-          <input value={draft.background ?? ""} placeholder="STD_RED, STD_YELLOW, rgb(12, 20, 20), #111316" onChange={(event) => setDraft((current) => ({ ...current, background: event.target.value }))} />
-        </label>
-        <label>
-          Working directory
-          <input value={draft.cwd ?? ""} onChange={(event) => setDraft((current) => ({ ...current, cwd: event.target.value }))} />
-        </label>
-        <label>
-          Command
-          <input value={draft.cmd ?? ""} onChange={(event) => setDraft((current) => ({ ...current, cmd: event.target.value }))} />
-        </label>
-        <label className="checkbox-label">
-          <input type="checkbox" checked={draft.no_run === true} onChange={(event) => setDraft((current) => ({ ...current, no_run: event.target.checked }))} />
-          no_run
-        </label>
-        <label className="checkbox-label">
-          <input type="checkbox" checked={draft.ansiParserEnabled !== false} onChange={(event) => setDraft((current) => ({ ...current, ansiParserEnabled: event.target.checked }))} />
-          ANSI parser
-        </label>
-      </div>
-      <div className="dialog-actions">
-        <DialogDismiss className="secondary-button">Cancel</DialogDismiss>
-        <Button className="primary-button" onClick={() => void onSave(draft)}>
-          Save
-        </Button>
-      </div>
-    </Dialog>
   );
 }
 
@@ -821,6 +689,9 @@ function ProjectHeader({
   collapsed,
   readonly,
   canReload,
+  canCreate,
+  error,
+  onSettings,
   gatherErrors,
   onGatherErrors,
   onToggleCollapsed,
@@ -837,6 +708,9 @@ function ProjectHeader({
   collapsed: boolean;
   readonly?: boolean;
   canReload?: boolean;
+  canCreate?: boolean;
+  error?: string;
+  onSettings: () => void;
   gatherErrors: boolean;
   onGatherErrors: (enabled: boolean) => Promise<void>;
   onToggleCollapsed: () => void;
@@ -857,12 +731,15 @@ function ProjectHeader({
         <span>{collapsed ? ">" : "v"}</span>
         <h2>{project}</h2>
       </button>
-      {!readonly ? <div className="menu-wrap">
+      <div className="menu-wrap">
         <button className="project-menu-button" title={`Project actions for ${project}`} aria-label={`Project actions for ${project}`} onClick={() => setOpen((value) => !value)}>
           <MenuIcon />
         </button>
         {open ? (
           <div className="dropdown-menu project-dropdown">
+            <button onClick={() => { setOpen(false); onSettings(); }}>Settings...</button>
+            {canReload ? <button onClick={() => { setOpen(false); void onReload(); }}>List source</button> : null}
+            {!readonly ? <>
             <label className="gather-errors-control project-gather-errors">
               <input type="checkbox" checked={gatherErrors} onChange={(event) => void onGatherErrors(event.target.checked)} />
               Gather errors by default
@@ -871,13 +748,14 @@ function ProjectHeader({
             <button onClick={() => void onRestartExceptNoRun()}>Restart except no_run</button>
             <button onClick={() => void onStop()}>Stop all</button>
             <button onClick={() => void onStart()}>Start all</button>
-            {canReload ? <button onClick={onAddConsole}>Add console...</button> : null}
-            {canReload ? <button onClick={() => void onReload()}>Reload mywins.json</button> : null}
+            {canCreate ? <button onClick={() => { setOpen(false); onAddConsole(); }}>Add console...</button> : null}
             <button onClick={() => void onMarkRead()}>All read</button>
-            <button onClick={() => void onClose(project)}>Close</button>
+            </> : null}
+            <button onClick={() => { setOpen(false); void onClose(project); }}>Close</button>
           </div>
         ) : null}
-      </div> : null}
+      </div>
+      {error ? <span className="folder-source-error" title={error} aria-label={`Source error: ${error}`}>!</span> : null}
     </div>
   );
 }
@@ -941,10 +819,10 @@ function ConsoleActionsMenu({ consoleRecord, onEditConfig, onDelete }: {
       </button>
       {open ? (
         <div className="dropdown-menu detail-dropdown">
-          {consoleRecord.projectPath ? <button onClick={() => { setOpen(false); onEditConfig(); }}>Settings...</button> : null}
-          <button onClick={() => { setOpen(false); void onDelete(); }}>
-            {consoleRecord.projectPath ? "Delete from mywins.json" : "Delete console"}
-          </button>
+          {consoleRecord.capabilities?.update !== false && !consoleRecord.orphaned ? <button onClick={() => { setOpen(false); onEditConfig(); }}>Settings...</button> : null}
+          {consoleRecord.capabilities?.delete !== false ? <button onClick={() => { setOpen(false); void onDelete(); }}>
+            {consoleRecord.projectPath ? "Delete from mywins.json" : consoleRecord.sourceKey !== undefined ? "Delete from source" : "Delete console"}
+          </button> : null}
         </div>
       ) : null}
     </div>
@@ -975,7 +853,7 @@ function ConsoleRow({
   return (
     <div className={`console-row ${active ? "active" : ""}`} style={{ "--console-label-bg": labelColor } as React.CSSProperties} onClick={onSelect}>
       <span className={`status ${item.status}`}>{consoleStatusGlyph(item.status)}</span>
-      <span className="console-title">{item.name}</span>
+      <span className="console-title" title={item.description}>{item.name}{item.orphaned ? " (orphaned)" : ""}</span>
       {showErrorBadge ? <span className="badge">{item.unseenErrorCount}</span> : null}
       <div className="console-row-actions">
         {canClose ? (
@@ -991,7 +869,7 @@ function ConsoleRow({
             <CloseIcon />
           </button>
         ) : null}
-        {!item.readonly && item.projectPath ? <ConsoleActionsMenu consoleRecord={item} onEditConfig={onEditConfig} onDelete={onDeleteConfig} /> : null}
+        {!item.readonly ? <ConsoleActionsMenu consoleRecord={item} onEditConfig={onEditConfig} onDelete={onDeleteConfig} /> : null}
       </div>
     </div>
   );
@@ -1373,7 +1251,9 @@ function TerminalPane({
         </div>
         <div className="toolbar-main">
           <div>
-            <EditableConsoleHeading consoleRecord={consoleRecord} onRename={onRename} />
+            {isReadonly ? <span>{consoleRecord.name}</span> : consoleRecord.sourceKey !== undefined ? <button className="detail-title-button" disabled={consoleRecord.capabilities?.update === false || consoleRecord.orphaned} onClick={onEditConfig}>{consoleRecord.name}</button> : <EditableConsoleHeading consoleRecord={consoleRecord} onRename={onRename} />}
+            {consoleRecord.pendingRestart ? <span className="pending-restart" title="Launch settings changed">Restart pending</span> : null}
+            {consoleRecord.orphaned ? <span className="pending-restart">orphaned</span> : null}
             <p>
               <span>{consoleRecord.cwd}</span>
               {consoleRecord.pid ? <span className="meta-pill">PID {consoleRecord.pid}</span> : null}
@@ -1395,7 +1275,7 @@ function TerminalPane({
               <button onClick={() => post(canRestart ? "restart" : "start")}>{canRestart ? "Restart" : "Start"}</button>
               {consoleRecord.nativeCli && canRestart ? <button disabled={nativeBusy} onClick={() => void toggleNative()}>{consoleRecord.nativeCli.visible ? "Скрыть native cli" : "Показать native cli"}</button> : null}
               {consoleRecord.project === "Default" || canRestart ? <button onClick={onClose}>{consoleRecord.project === "Default" && !canRestart ? "Delete" : "Close"}</button> : null}
-              {consoleRecord.projectPath || consoleRecord.project === "Default" ? <ConsoleActionsMenu key={consoleRecord.id} consoleRecord={consoleRecord} onEditConfig={onEditConfig} onDelete={consoleRecord.projectPath ? onDeleteConfig : onClose} /> : null}
+              <ConsoleActionsMenu key={consoleRecord.id} consoleRecord={consoleRecord} onEditConfig={onEditConfig} onDelete={onDeleteConfig} />
             </> : null}
           </div>
         </div>

@@ -3,341 +3,137 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { WebSocketServer } from "ws";
 import type { ConsoleManager } from "./consoleManager.js";
-import { Pm2Monitor } from "./pm2Monitor.js";
+import { FolderService } from "./folderService.js";
 import { saveSettings } from "./settings.js";
 
-export function createApp(manager: ConsoleManager, options: { pm2?: Pm2Monitor | false } = {}): express.Express {
+export function createApp(manager: ConsoleManager, options: { folders?: FolderService } = {}): express.Express {
   const app = express();
-  const pm2 = options.pm2 === false ? undefined : options.pm2 ?? new Pm2Monitor();
+  const folders = options.folders ?? new FolderService(manager);
+  app.locals.folders = folders;
   app.use(express.json({ limit: "1mb" }));
+  const manualConsole = async (body: any, register = false) => {
+    await folders.ensureManual(body.project ?? "Default");
+    return register ? manager.registerConsole(body) : manager.create(body);
+  };
+  const addProject = (body: any) => folders.configure({ ...body, type: body.type ?? "manual" });
 
-  app.get("/api/health", (_req, res) => {
-    res.json({ ok: true });
-  });
+  app.get("/api/health", (_req, res) => { res.json({ ok: true }); });
+  app.get("/api/consoles", (req, res) => { res.json({ consoles: manager.list(req.query.project?.toString()) }); });
+  app.get("/api/projects", (_req, res) => { res.json({ projects: manager.listProjects() }); });
+  app.post("/api/projects", route(respond((req) => addProject(req.body))));
+  app.get("/api/projects/:project/settings", route(respond((req) => folders.get(param(req, "project")))));
+  app.put("/api/projects/:project/settings", route(respond((req) => folders.configure({ ...req.body, name: folders.get(param(req, "project")).name }))));
+  app.post("/api/projects/:project/list", route(respond((req) => folders.listFolder(param(req, "project"), true))));
+  app.get("/api/projects/:project/fields", route(respond((req) => folders.entry(param(req, "project")))));
+  app.post("/api/projects/:project/entries", route(respond((req) => folders.createEntry(param(req, "project"), req.body.values ?? req.body))));
+  app.get("/api/consoles/:id/entry", route(respond((req) => folders.entry(manager.get(param(req, "id")).project, param(req, "id")))));
+  app.put("/api/consoles/:id/entry", route(respond((req) => folders.updateEntry(param(req, "id"), req.body.values ?? req.body))));
+  app.delete("/api/consoles/:id/entry", route(respond(async (req) => { await folders.deleteEntry(param(req, "id"), req.body.confirmed === true); return { ok: true }; })));
 
-  app.get("/api/consoles", (req, res) => {
-    const project = req.query.project?.toString();
-    const consoles = project === "pm2" ? pm2?.list() ?? [] : [...manager.list(project), ...(project || !pm2 ? [] : pm2.list())];
-    res.json({ consoles });
-  });
-
-  app.get("/api/projects", (_req, res) => {
-    const pm2Consoles = pm2?.list() ?? [];
-    res.json({
-      projects: [
-        ...manager.listProjects(),
-        ...(pm2 ? [{
-          name: "pm2",
-          gatherErrors: false,
-          isLarge: pm2Consoles.length > 10,
-          consoleCount: pm2Consoles.length,
-          runningCount: pm2Consoles.filter((row) => row.status === "running").length,
-          readyCount: 0,
-          unseenErrorCount: 0
-        }] : [])
-      ]
-    });
-  });
-
-  app.post("/api/projects", route(respond((req) => manager.createProject(String(req.body.name ?? "")))));
-
-  app.get("/api/recent-projects", (_req, res) => {
-    res.json({ projects: manager.recentProjects() });
-  });
-
-  app.get("/api/settings", (_req, res) => {
-    res.json({ settings: manager.getSettings() });
-  });
-
-  app.post(
-    "/api/settings",
-    route(
-      respond((req) => ({
-        settings: manager.updateSettings(saveSettings(req.body.settings ?? req.body))
-      }))
-    )
-  );
-
-  app.delete(
-    "/api/recent-projects",
-    route(
-      respond((req) => ({
-        projects: manager.removeRecentProject(String(req.body.projectPath ?? ""))
-      }))
-    )
-  );
-
-  app.post("/api/consoles", route(respond((req) => manager.create(req.body))));
-
-  app.post("/api/batch", route(respond((req) => manager.createBatch(req.body.projectPath, req.body.fileName))));
-
-  app.get(
-    "/api/consoles/:id",
-    route(respond((req) => {
-      const id = param(req, "id");
-      if (pm2?.has(id)) {
-        const snapshot = pm2.get(id);
-        if (!snapshot) throw new Error(`Console ${id} not found`);
-        return snapshot;
-      }
-      return manager.get(id);
-    }))
-  );
-
-  app.get(
-    "/api/consoles/:id/output",
-    route(
-      respond((req) => ({
-        output: pm2?.has(param(req, "id"))
-          ? pm2.readOutput(param(req, "id"), req.query.tailLines ? Number(req.query.tailLines) : undefined)
-          : manager.readOutput(param(req, "id"), req.query.tailLines ? Number(req.query.tailLines) : undefined)
-      }))
-    )
-  );
-
-  app.get(
-    "/api/consoles/:id/state",
-    route(
-      respond((req) => {
-        const id = param(req, "id");
-        const tailLines = req.query.tailLines ? Number(req.query.tailLines) : undefined;
-        if (pm2?.has(id)) {
-          const state = pm2.getState(id, tailLines);
-          if (!state) throw new Error(`Console ${id} not found`);
-          return state;
-        }
-        return manager.getState(id, tailLines);
-      })
-    )
-  );
-
-  app.post(
-    "/api/consoles/:id/input",
-    route(
-      respond((req) => {
-        manager.write(param(req, "id"), String(req.body.data ?? ""));
-        return { ok: true };
-      })
-    )
-  );
-
-  app.post(
-    "/api/consoles/:id/signal",
-    route(
-      respond((req) => {
-        manager.signal(param(req, "id"), String(req.body.signal ?? "ctrl+c").toLowerCase());
-        return { ok: true };
-      })
-    )
-  );
-
+  app.get("/api/recent-projects", (_req, res) => { res.json({ projects: manager.recentProjects() }); });
+  app.delete("/api/recent-projects", route(respond((req) => ({ projects: manager.removeRecentProject(String(req.body.projectPath ?? "")) }))));
+  app.get("/api/settings", (_req, res) => { res.json({ settings: manager.getSettings() }); });
+  app.post("/api/settings", route(respond((req) => ({ settings: manager.updateSettings(saveSettings(req.body.settings ?? req.body)) }))));
+  app.post("/api/consoles", route(respond((req) => manualConsole(req.body))));
+  app.post("/api/batch", route(respond(async (req) => {
+    const records = manager.createBatch(req.body.projectPath, req.body.fileName);
+    const name = path.basename(path.resolve(req.body.projectPath));
+    await folders.configure({ name, type: "my_wins", projectPath: req.body.projectPath });
+    return records;
+  })));
+  app.get("/api/consoles/:id", route(respond((req) => folders.snapshot(param(req, "id")))));
+  app.get("/api/consoles/:id/output", route(respond(async (req) => ({ output: await folders.readOutput(param(req, "id"), req.query.tailLines ? Number(req.query.tailLines) : undefined) }))));
+  app.get("/api/consoles/:id/state", route(respond((req) => folders.sessionState(param(req, "id"), req.query.tailLines ? Number(req.query.tailLines) : undefined))));
+  app.post("/api/consoles/:id/input", route(respond((req) => { manager.write(param(req, "id"), String(req.body.data ?? "")); return { ok: true }; })));
+  app.post("/api/consoles/:id/signal", route(respond((req) => { manager.signal(param(req, "id"), String(req.body.signal ?? "ctrl+c").toLowerCase()); return { ok: true }; })));
   app.post("/api/consoles/:id/restart", route(respond((req) => manager.restart(param(req, "id")))));
-
-  app.get("/api/consoles/:id/native", route(async (req, res) => {
-    res.json(await manager.nativeWindow(param(req, "id")));
-  }));
-  app.post("/api/consoles/:id/native", route(async (req, res) => {
-    if (typeof req.body.visible !== "boolean") throw new Error("visible must be a boolean");
-    res.json(await manager.nativeWindow(param(req, "id"), req.body.visible));
-  }));
-
   app.post("/api/consoles/:id/start", route(respond((req) => manager.start(param(req, "id")))));
-
-  app.post("/api/consoles/:id/name", route(respond((req) => manager.rename(param(req, "id"), String(req.body.name ?? "")))));
-
+  app.post("/api/consoles/:id/name", route(respond((req) => folders.renameEntry(param(req, "id"), String(req.body.name ?? "")))));
   app.post("/api/consoles/:id/read", route(respond((req) => manager.markRead(param(req, "id")))));
   app.post("/api/consoles/:id/gather-errors", route(respond((req) => manager.setGatherErrors(param(req, "id"), req.body.enabled))));
-
+  app.get("/api/consoles/:id/native", route(respond((req) => manager.nativeWindow(param(req, "id")))));
+  app.post("/api/consoles/:id/native", route(respond((req) => {
+    if (typeof req.body.visible !== "boolean") throw new Error("visible must be a boolean");
+    return manager.nativeWindow(param(req, "id"), req.body.visible);
+  })));
   app.get("/api/consoles/:id/mywins", route(respond((req) => manager.getMywinsEntry(param(req, "id")))));
-
   app.put("/api/consoles/:id/mywins", route(respond((req) => manager.updateMywinsEntry(param(req, "id"), req.body))));
-
   app.delete("/api/consoles/:id/mywins", route(respond((req) => manager.deleteMywinsEntry(param(req, "id")))));
-
-  app.delete(
-    "/api/consoles/:id",
-    route(
-      respond((req) => {
-        manager.kill(param(req, "id"));
-        return { ok: true };
-      })
-    )
-  );
-
+  app.delete("/api/consoles/:id", route(respond((req) => { manager.kill(param(req, "id")); return { ok: true }; })));
   app.post("/api/projects/:project/restart", route(respond((req) => manager.restartProject(param(req, "project")))));
   app.post("/api/projects/:project/restart-except-no-run", route(respond((req) => manager.restartProjectExceptNoRun(param(req, "project")))));
-  app.post("/api/projects/:project/stop", route(respond((req) => {
-    manager.stopProject(param(req, "project"));
-    return { ok: true };
-  })));
+  app.post("/api/projects/:project/stop", route(respond((req) => { manager.stopProject(param(req, "project")); return { ok: true }; })));
   app.post("/api/projects/:project/start", route(respond((req) => manager.startProject(param(req, "project")))));
-  app.post("/api/projects/:project/reload", route(respond((req) => manager.reloadProjectConfig(param(req, "project")))));
+  app.post("/api/projects/:project/reload", route(respond((req) => folders.listFolder(param(req, "project"), true))));
   app.post("/api/projects/:project/mywins", route(respond((req) => manager.addMywinsEntry(param(req, "project"), req.body))));
-  app.post("/api/codex-contexts/import", route(respond((req) => manager.importCodexContexts(req.body ?? {}))));
-  app.post("/api/projects/:project/read", route(respond((req) => {
-    manager.markProjectRead(param(req, "project"));
-    return { ok: true };
-  })));
-  app.post("/api/projects/:project/gather-errors", route(respond((req) => manager.setProjectGatherErrors(param(req, "project"), req.body.enabled))));
-  app.delete("/api/projects/:project", route(respond((req) => {
-    manager.closeProject(param(req, "project"));
-    return { ok: true };
-  })));
+  app.post("/api/projects/:project/read", route(respond((req) => { manager.markProjectRead(param(req, "project")); return { ok: true }; })));
+  app.post("/api/projects/:project/gather-errors", route(respond((req) => { folders.setGatherErrors(param(req, "project"), req.body.enabled); return manager.listProjects().find((item) => item.name === param(req, "project")); })));
+  app.delete("/api/projects/:project", route(respond((req) => { folders.close(param(req, "project")); return { ok: true }; })));
 
-  app.post(
-    "/mcp",
-    route(async (req, res) => {
-        const method = req.body.method;
-        const hasId = Object.prototype.hasOwnProperty.call(req.body, "id");
-        const id = req.body.id ?? null;
-        if (!hasId && (method === "notifications/initialized" || method?.startsWith("notifications/"))) {
-          res.status(202).end();
-          return;
-        }
-        if (method === "tools/list") {
-          const tools = [
-            { name: "list_consoles", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
-            { name: "list_projects", description: "List visible yconhost projects, including empty MCP-managed projects and projects inferred from registered consoles.", inputSchema: { type: "object", properties: {} } },
-            { name: "set_console_gather_errors", description: "Enable or disable card/error gathering for a console without affecting its process, output stream or log. enabled=null restores inheritance from its project (codexes defaults to disabled; other projects to enabled).", inputSchema: { type: "object", properties: { id: { type: "string" }, enabled: { type: ["boolean", "null"] } }, required: ["id", "enabled"] } },
-            { name: "set_project_gather_errors", description: "Set the persisted default for card/error gathering in a project. Applies to existing and future sessions that inherit the default; explicit per-session overrides are preserved.", inputSchema: { type: "object", properties: { project: { type: "string" }, enabled: { type: "boolean" } }, required: ["project", "enabled"] } },
-            { name: "create_project", description: "Create a named yconhost project managed by MCP/UI. It is persisted in yconhost state and does not require or write mywins.json.", inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
-            { name: "import_codex_contexts", description: "Import Codex/ycodex and Claude launch contexts into the codexes yconhost project by default. Consoles are registered as idle colored slots; no agent process is started by import or by selecting a slot. Claude commands and resume arguments are preserved.", inputSchema: { type: "object", properties: { project: { type: "string" }, contextsPath: { type: "string" }, weztermPresetsPath: { type: "string" } } } },
-            { name: "get_console_state", description: "Read structured state for a console session, including status, timestamps for last input and last output, and the last few output lines. tailLines defaults to 8.", inputSchema: { type: "object", properties: { id: { type: "string" }, tailLines: { type: "number" } }, required: ["id"] } },
-            { name: "read_console", inputSchema: { type: "object", properties: { id: { type: "string" }, tailLines: { type: "number" } }, required: ["id"] } },
-            { name: "write_console", inputSchema: { type: "object", properties: { id: { type: "string" }, data: { type: "string" } }, required: ["id", "data"] } },
-            { name: "send_console_command", description: "Send a command line to an existing running console and return immediately without waiting for completion.", inputSchema: { type: "object", properties: { id: { type: "string" }, command: { type: "string" } }, required: ["id", "command"] } },
-            { name: "run_console_command", description: "Run a command line in an existing running console, wait until a completion marker is printed, and return captured output plus exitCode. timeoutMs defaults to 30000.", inputSchema: { type: "object", properties: { id: { type: "string" }, command: { type: "string" }, timeoutMs: { type: "number" } }, required: ["id", "command"] } },
-            { name: "create_console", description: "Create and start a console. MCP-created consoles are temporary by default and self-delete after the configured idle TTL; pass persistent=true to keep one.", inputSchema: { type: "object", properties: { name: { type: "string" }, project: { type: "string" }, projectPath: { type: "string" }, cwd: { type: "string" }, command: { type: "string" }, shell: { type: "string" }, args: { type: "array", items: { type: "string" } }, noRun: { type: "boolean" }, persistent: { type: "boolean" }, ansiParserEnabled: { type: "boolean" } } } },
-            { name: "register_console", description: "Register a console slot in an MCP/UI-managed project without using mywins.json. By default it is idle and temporary; pass start=true to launch it immediately or persistent=true to keep it.", inputSchema: { type: "object", properties: { project: { type: "string" }, name: { type: "string" }, projectPath: { type: "string" }, cwd: { type: "string" }, command: { type: "string" }, shell: { type: "string" }, args: { type: "array", items: { type: "string" } }, noRun: { type: "boolean" }, start: { type: "boolean" }, persistent: { type: "boolean" }, ansiParserEnabled: { type: "boolean" } }, required: ["project"] } },
-            { name: "close_console", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-            { name: "restart_console", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-            { name: "start_console", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-            { name: "stop_console", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-            { name: "restart_project_except_no_run", inputSchema: { type: "object", properties: { project: { type: "string" } }, required: ["project"] } },
-            { name: "reload_project_config", inputSchema: { type: "object", properties: { project: { type: "string" } }, required: ["project"] } }
-          ];
-          res.json({
-            jsonrpc: "2.0",
-            id,
-            tools,
-            result: { tools }
-          });
-          return;
-        }
-        if (method === "tools/call") {
-          const { name, arguments: args = {} } = req.body.params ?? {};
-          const content = (text: string) => {
-            const blocks = [{ type: "text", text }];
-            res.json({ jsonrpc: "2.0", id, content: blocks, result: { content: blocks } });
-          };
-          if (name === "list_consoles") {
-            const project = args.project;
-            const consoles = project === "pm2" ? pm2?.list() ?? [] : [...manager.list(project), ...(project || !pm2 ? [] : pm2.list())];
-            content(JSON.stringify(consoles, null, 2));
-            return;
-          }
-          if (name === "list_projects") {
-            const projects = [...manager.listProjects(), ...(pm2 ? [{
-              name: "pm2",
-              isLarge: pm2.list().length > 10,
-              consoleCount: pm2.list().length,
-              runningCount: pm2.list().filter((row) => row.status === "running").length,
-              readyCount: 0,
-              unseenErrorCount: 0
-            }] : [])];
-            content(JSON.stringify(projects, null, 2));
-            return;
-          }
-          if (name === "create_project") {
-            content(JSON.stringify(manager.createProject(String(args.name ?? "")), null, 2));
-            return;
-          }
-          if (name === "import_codex_contexts") {
-            content(JSON.stringify(manager.importCodexContexts(args), null, 2));
-            return;
-          }
-          if (name === "read_console") {
-            content(pm2?.has(args.id) ? pm2.readOutput(args.id, args.tailLines) : manager.readOutput(args.id, args.tailLines));
-            return;
-          }
-          if (name === "get_console_state") {
-            const state = pm2?.has(args.id) ? pm2.getState(args.id, args.tailLines) : manager.getState(args.id, args.tailLines);
-            if (!state) throw new Error(`Console ${args.id} not found`);
-            content(JSON.stringify(state, null, 2));
-            return;
-          }
-          if (name === "write_console") {
-            if (pm2?.has(args.id)) throw new Error(`Console ${args.id} is readonly`);
-            manager.write(args.id, args.data);
-            content("ok");
-            return;
-          }
-          if (name === "send_console_command") {
-            if (pm2?.has(args.id)) throw new Error(`Console ${args.id} is readonly`);
-            content(JSON.stringify(await manager.runCommand(args.id, args.command, { wait: false }), null, 2));
-            return;
-          }
-          if (name === "run_console_command") {
-            if (pm2?.has(args.id)) throw new Error(`Console ${args.id} is readonly`);
-            content(JSON.stringify(await manager.runCommand(args.id, args.command, { wait: true, timeoutMs: args.timeoutMs }), null, 2));
-            return;
-          }
-          if (name === "create_console") {
-            content(JSON.stringify(manager.create({ ...args, persistent: args.persistent === true }), null, 2));
-            return;
-          }
-          if (name === "register_console") {
-            content(JSON.stringify(manager.registerConsole({ ...args, persistent: args.persistent === true }), null, 2));
-            return;
-          }
-          if (name === "set_console_gather_errors") {
-            content(JSON.stringify(manager.setGatherErrors(String(args.id), args.enabled), null, 2));
-            return;
-          }
-          if (name === "set_project_gather_errors") {
-            content(JSON.stringify(manager.setProjectGatherErrors(String(args.project), args.enabled), null, 2));
-            return;
-          }
-          if (name === "close_console") {
-            if (pm2?.has(args.id)) throw new Error(`Console ${args.id} is readonly`);
-            manager.kill(args.id);
-            content("ok");
-            return;
-          }
-          if (name === "restart_console") {
-            content(JSON.stringify(manager.restart(args.id), null, 2));
-            return;
-          }
-          if (name === "start_console") {
-            content(JSON.stringify(manager.start(args.id), null, 2));
-            return;
-          }
-          if (name === "stop_console") {
-            manager.stop(args.id);
-            content("ok");
-            return;
-          }
-          if (name === "restart_project_except_no_run") {
-            content(JSON.stringify(manager.restartProjectExceptNoRun(args.project), null, 2));
-            return;
-          }
-          if (name === "reload_project_config") {
-            content(JSON.stringify(manager.reloadProjectConfig(args.project), null, 2));
-            return;
-          }
-          throw new Error(`Unsupported MCP tool ${name}`);
-        }
-        if (method === "initialize") {
-          const requestedVersions = Array.isArray(req.body.params?.protocolVersions) ? req.body.params.protocolVersions : [];
-          const protocolVersion = requestedVersions.includes("2024-11-05") ? "2024-11-05" : req.body.params?.protocolVersion ?? "2024-11-05";
-          const result = { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "yconhost", version: "0.1.0" } };
-          res.json({ jsonrpc: "2.0", id, result });
-          return;
-        }
-        throw new Error(`Unsupported MCP method ${method}`);
-    })
-  );
-
+  const string = { type: "string" };
+  const boolean = { type: "boolean" };
+  const values = { type: "object", additionalProperties: string };
+  const configProperties = { name: string, type: { type: "string", enum: ["manual", "my_wins", "scripted"] }, scriptPath: string, projectPath: string, intervalSeconds: { type: "number", minimum: 0, maximum: 86400 }, gatherErrors: boolean, closeRemoves: boolean, confirmed: boolean };
+  const consoleProperties = { name: string, project: string, cwd: string, command: string, shell: string, args: { type: "array", items: string }, noRun: boolean, persistent: boolean, ansiParserEnabled: boolean };
+  const descriptors: Array<{ name: string; description: string; properties: object; required?: string[]; run: (args: any) => unknown }> = [
+    { name: "list_consoles", description: "List cached console slots without starting or rereading sources.", properties: { project: string }, run: (a) => manager.list(a.project) },
+    { name: "list_projects", description: "List folders, including empty folders, types, capabilities and source errors.", properties: {}, run: () => manager.listProjects() },
+    { name: "create_project", description: "Create a folder. manual does not require or write mywins.json. scripted requires a unique absolute local JS path exporting list(context). No processes are started.", properties: configProperties, required: ["name"], run: addProject },
+    { name: "get_folder_settings", description: "Read folder type, source path, update interval and capabilities.", properties: { project: string }, required: ["project"], run: (a) => folders.get(a.project) },
+    { name: "update_folder_settings", description: "Update settings. Changing type or source recreates the folder under the same name and stops owned sessions; requires confirmed=true. Never deletes external source files or PM2 processes.", properties: { ...configProperties, project: string }, required: ["project", "type"], run: (a) => folders.configure({ ...a, name: folders.get(a.project).name }) },
+    { name: "list_folder", description: "Reread the local script and call list(context), reconciling idle slots without launching processes. Retains the last good list on failure.", properties: { project: string }, required: ["project"], run: (a) => folders.listFolder(a.project, true) },
+    { name: "get_folder_fields", description: "Read shared create/edit fields and original values. Types: string and color; color values are HEX/RGB or STD_* strings. Omitted defineFields defaults to name and description.", properties: { project: string, id: string }, required: ["project"], run: (a) => folders.entry(a.project, a.id) },
+    { name: "create_folder_entry", description: "Create in the folder source using string values, then call list. Only available when the source exports create; never bypasses the source.", properties: { project: string, values }, required: ["project", "values"], run: (a) => folders.createEntry(a.project, a.values) },
+    { name: "update_folder_entry", description: "Edit a source entry via update(original, values), then list. Pass all form values. Preserves console ID/history when update returns its new key. Codex forbids changing name and session_id together.", properties: { id: string, values }, required: ["id", "values"], run: (a) => folders.updateEntry(a.id, a.values) },
+    { name: "delete_folder_entry", description: "Delete/disable an entry in its source, stopping its owned process only after source success. Requires confirmed=true. Codex marks H1 with DELETED; PM2 is readonly.", properties: { id: string, confirmed: boolean }, required: ["id", "confirmed"], run: async (a) => { await folders.deleteEntry(a.id, a.confirmed === true); return { ok: true }; } },
+    { name: "get_console_state", description: "Read session status, last input/output timestamps and the last few output lines. tailLines defaults to 8.", properties: { id: string, tailLines: { type: "number" } }, required: ["id"], run: (a) => folders.sessionState(a.id, a.tailLines) },
+    { name: "read_console", description: "Read output of an owned or external readonly console.", properties: { id: string, tailLines: { type: "number" } }, required: ["id"], run: (a) => folders.readOutput(a.id, a.tailLines) },
+    { name: "write_console", description: "Send raw input to a running writable console.", properties: { id: string, data: string }, required: ["id", "data"], run: (a) => { manager.write(a.id, a.data); return "ok"; } },
+    { name: "send_console_command", description: "Send a command line to an existing running console and return immediately without waiting for completion.", properties: { id: string, command: string }, required: ["id", "command"], run: (a) => manager.runCommand(a.id, a.command, { wait: false }) },
+    { name: "run_console_command", description: "Run a command line in an existing running console, wait for its completion marker and return captured output and exitCode. timeoutMs defaults to 30000.", properties: { id: string, command: string, timeoutMs: { type: "number" } }, required: ["id", "command"], run: (a) => manager.runCommand(a.id, a.command, { wait: true, timeoutMs: a.timeoutMs }) },
+    { name: "create_console", description: "Create and start a manual console. Temporary by default, expires after idle TTL; pass persistent=true to retain it. Use create_folder_entry for source-controlled folders.", properties: consoleProperties, run: (a) => manualConsole({ ...a, persistent: a.persistent === true }) },
+    { name: "register_console", description: "Register a slot in a manual project, idle and temporary by default. start=true launches; persistent=true retains it. Does not use mywins.json.", properties: { ...consoleProperties, start: boolean }, required: ["project"], run: (a) => manualConsole({ ...a, persistent: a.persistent === true }, true) },
+    { name: "close_console", description: "Close a console process, not its source entry. Folder policy decides whether its slot remains; external consoles are readonly.", properties: { id: string }, required: ["id"], run: (a) => { manager.kill(a.id); return "ok"; } },
+    { name: "restart_console", description: "Restart an owned console with its latest launch definition.", properties: { id: string }, required: ["id"], run: (a) => manager.restart(a.id) },
+    { name: "start_console", description: "Start an idle owned console.", properties: { id: string }, required: ["id"], run: (a) => manager.start(a.id) },
+    { name: "stop_console", description: "Stop an owned console, retaining its slot.", properties: { id: string }, required: ["id"], run: (a) => { manager.stop(a.id); return "ok"; } },
+    { name: "restart_project_except_no_run", description: "Restart project consoles excluding no_run entries; external entries cannot be controlled.", properties: { project: string }, required: ["project"], run: (a) => manager.restartProjectExceptNoRun(a.project) },
+    { name: "reload_project_config", description: "Reread folder source using list(context). Works for my_wins and scripted; never launches commands.", properties: { project: string }, required: ["project"], run: (a) => folders.listFolder(a.project, true) },
+    { name: "set_console_gather_errors", description: "Enable/disable error cards; enabled=null restores folder inheritance.", properties: { id: string, enabled: { type: ["boolean", "null"] } }, required: ["id", "enabled"], run: (a) => manager.setGatherErrors(a.id, a.enabled) },
+    { name: "set_project_gather_errors", description: "Persist the folder default, keeping explicit per-console overrides.", properties: { project: string, enabled: boolean }, required: ["project", "enabled"], run: (a) => { folders.setGatherErrors(a.project, a.enabled); return folders.get(a.project); } }
+  ];
+  app.post("/mcp", route(async (req, res) => {
+    const { method } = req.body;
+    const hasId = Object.prototype.hasOwnProperty.call(req.body, "id");
+    const id = req.body.id ?? null;
+    if (!hasId && method?.startsWith("notifications/")) { res.status(202).end(); return; }
+    if (method === "initialize") {
+      const requested = req.body.params?.protocolVersions;
+      const protocolVersion = Array.isArray(requested) && requested.includes("2024-11-05") ? "2024-11-05" : req.body.params?.protocolVersion ?? "2024-11-05";
+      res.json({ jsonrpc: "2.0", id, result: { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "yconhost", version: "0.1.0" } } }); return;
+    }
+    if (method === "tools/list") {
+      const tools = descriptors.map(({ name, description, properties, required }) => ({ name, description, inputSchema: { type: "object", properties, ...(required ? { required } : {}) } }));
+      res.json({ jsonrpc: "2.0", id, tools, result: { tools } }); return;
+    }
+    if (method === "tools/call") {
+      let content;
+      let isError = false;
+      try {
+        const descriptor = descriptors.find((item) => item.name === req.body.params?.name);
+        if (!descriptor) throw new Error(`Unsupported MCP tool ${req.body.params?.name}`);
+        const args = req.body.params?.arguments ?? {};
+        for (const required of descriptor.required ?? []) if (!(required in args)) throw new Error(`Missing required argument ${required}`);
+        const value = await descriptor.run(args);
+        content = [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }];
+      } catch (error) {
+        isError = true;
+        content = [{ type: "text", text: error instanceof Error ? error.message : String(error) }];
+      }
+      res.json({ jsonrpc: "2.0", id, content, result: { content, ...(isError ? { isError: true } : {}) } }); return;
+    }
+    throw new Error(`Unsupported MCP method ${method}`);
+  }));
   app.use(express.static(path.resolve("dist/client")));
   return app;
 }
@@ -376,27 +172,22 @@ export function attachWebSocket(server: Server, manager: ConsoleManager): WebSoc
   return wss;
 }
 
-function respond<T>(handler: (req: express.Request) => T): (req: express.Request, res: express.Response) => void {
-  return (req, res) => res.json(handler(req));
+
+function respond<T>(handler: (req: express.Request) => T): express.RequestHandler {
+  return async (req, res) => { res.json(await handler(req)); };
 }
 
 function route(handler: express.RequestHandler): express.RequestHandler {
   return (req, res, next) => {
-    try {
-      Promise.resolve(handler(req, res, next)).catch((error) => handleRouteError(error, res, next));
-    } catch (error) {
-      handleRouteError(error, res, next);
-    }
+    try { Promise.resolve(handler(req, res, next)).catch((error) => handleRouteError(error, res, next)); }
+    catch (error) { handleRouteError(error, res, next); }
   };
 }
 
 function handleRouteError(error: unknown, res: express.Response, next: express.NextFunction): void {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      if (res.headersSent) {
-        next(error);
-        return;
-      }
-      res.status(message.includes("not found") ? 404 : 400).json({ error: message });
+  const message = error instanceof Error ? error.message : "Unknown error";
+  if (res.headersSent) { next(error); return; }
+  res.status(message.includes("not found") ? 404 : 400).json({ error: message });
 }
 
 function param(req: express.Request, name: string): string {

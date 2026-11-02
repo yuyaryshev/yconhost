@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadCodexContextPresets } from "../src/server/codexContexts.js";
+import { createCodexFolder } from "../src/server/folders/codexes.mjs";
 
 describe("agent context import", () => {
   let dir: string;
@@ -19,7 +19,7 @@ describe("agent context import", () => {
     fs.writeFileSync(contextsPath, sections.map(({ name, code, color = "#003200" }) =>
       `# ${name}\nColor: \`${color}\`\n\n\`\`\`cmd\n${code}\n\`\`\`\n`
     ).join("\n"));
-    return loadCodexContextPresets({ project: "codexes", contextsPath, defaultCwd: dir });
+    return createCodexFolder({ contextsPath, defaultCwd: dir }).list();
   }
 
   it("preserves the first Claude launch command, resume ID, cwd and color as an idle persistent slot", () => {
@@ -27,8 +27,8 @@ describe("agent context import", () => {
     const command = `cls && cd /d "${cwd}" && claude --resume saved-thread --dangerously-skip-permissions`;
     const slots = load([{ name: "khb_microservices_claude", color: "#003232", code: `${command}\n\nclaude --dangerously-skip-permissions` }]);
     expect(slots).toEqual([expect.objectContaining({
-      project: "codexes", name: "khb_microservices_claude", command, cwd,
-      background: "#003232", noRun: true, persistent: true, start: false
+      name: "khb_microservices_claude", command, cwd,
+      background: "#003232", noRun: true
     })]);
     expect(slots[0].command).not.toContain("--bypass-safety-y");
   });

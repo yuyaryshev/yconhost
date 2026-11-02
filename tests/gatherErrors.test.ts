@@ -10,6 +10,7 @@ import { LogStore } from "../src/server/logStore.js";
 import { ProjectStore } from "../src/server/projectStore.js";
 import { loadSettings } from "../src/server/settings.js";
 import { FakeTerminalFactory } from "../src/server/terminal.js";
+import { configureCodexFixture } from "./folderFixtures.js";
 
 describe("Gather errors", () => {
   let dir: string;
@@ -20,10 +21,12 @@ describe("Gather errors", () => {
   let app: ReturnType<typeof createApp>;
 
   function restore() {
+    app?.locals.folders.dispose();
+    manager?.dispose();
     factory = new FakeTerminalFactory();
     logs = new LogStore(settings);
     manager = new ConsoleManager(settings, logs, factory, new ConsoleStore(settings), new ProjectStore(settings));
-    app = createApp(manager, { pm2: false });
+    app = createApp(manager);
   }
 
   beforeEach(() => {
@@ -33,9 +36,11 @@ describe("Gather errors", () => {
       projectName: "codexes", contextsPath: path.join(dir, "contexts.md"), weztermPresetsPath: path.join(dir, "missing.lua")
     } };
     restore();
+    manager.setProjectGatherErrors("codexes", false);
   });
 
   afterEach(() => {
+    app.locals.folders.dispose();
     manager.dispose();
     vi.restoreAllMocks();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -98,14 +103,14 @@ describe("Gather errors", () => {
   });
 
   it("persists project inheritance and explicit overrides through restart, Start and reimport", async () => {
-    fs.writeFileSync(settings.codexContexts.contextsPath, "# Claude\nColor: `#003200`\n```cmd\nclaude --resume saved\n```\n");
-    const inherited = manager.importCodexContexts().consoles[0];
-    const explicit = manager.registerConsole({ project: "codexes", name: "override" });
+    fs.writeFileSync(settings.codexContexts.contextsPath, "# Claude\nColor: `#003200`\n```cmd\nclaude --resume saved\n```\n# override\nColor: `#003200`\n```cmd\nycodex resume override\n```\n");
+    await configureCodexFixture(app.locals.folders, settings);
+    const [inherited, explicit] = manager.list("codexes");
     manager.setGatherErrors(explicit.id, true);
     await request(app).post("/api/projects/codexes/gather-errors").send({ enabled: false }).expect(200);
     expect(explicit.gatherErrors).toBe(true);
     manager.setGatherErrors(inherited.id, true);
-    manager.importCodexContexts();
+    await app.locals.folders.listFolder("codexes");
     expect(inherited.gatherErrorsOverride).toBe(true);
     manager.setGatherErrors(inherited.id, null);
     expect(inherited.gatherErrors).toBe(false);

@@ -5,17 +5,19 @@ import xtermHeadless from "@xterm/headless";
 import type { Terminal as HeadlessTerminal } from "@xterm/headless";
 import JSON5 from "json5";
 import { compactCardHash, extractCardsFromText, mergeCards } from "./cardExtractor.js";
-import { loadCodexContextPresets } from "./codexContexts.js";
+import { resolveConsoleBackground } from "../shared/colors.js";
+import type { FolderInfo, FolderItem, FolderCapabilities } from "./folderTypes.js";
 import type { LogStore } from "./logStore.js";
 import type { ConsoleStore } from "./consoleStore.js";
 import type { ProjectStore } from "./projectStore.js";
 import type { TerminalFactory, TerminalSession } from "./terminal.js";
-import type { AppSettings, BatchWinConfig, CodexContextsImportRequest, CodexContextsImportResult, ConsoleCreateRequest, ConsoleRecord, ConsoleRegisterRequest, ConsoleSessionState, ConsoleSnapshot, ErrorMatch, ExtractedCard, ManagedProject, MywinsEntry, ProjectSummary, RecentProject, ThemeColorPair } from "./types.js";
+import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleRecord, ConsoleRegisterRequest, ConsoleSessionState, ConsoleSnapshot, ErrorMatch, ExtractedCard, ManagedProject, MywinsEntry, ProjectSummary, RecentProject, ThemeColorPair } from "./types.js";
 
 type OutputListener = (consoleId: string, chunk: string) => void;
 const { Terminal } = xtermHeadless as typeof import("@xterm/headless");
 
 interface ManagedConsole {
+  activeLaunch?: string;
   record: ConsoleRecord;
   session?: TerminalSession;
   mirror: HeadlessTerminal;
@@ -32,6 +34,7 @@ export class ConsoleManager {
   private cleanupTimer?: ReturnType<typeof setInterval>;
   private readonly managedProjects = new Set<string>();
   private readonly projectGatherErrors = new Map<string, boolean>();
+  private readonly folders = new Map<string, FolderInfo>();
 
   constructor(
     private settings: AppSettings,
@@ -48,11 +51,6 @@ export class ConsoleManager {
       this.createManaged(definition, false);
     }
     this.cleanupTemporaryConsoles();
-    try {
-      this.importCodexContexts();
-    } catch (error) {
-      console.error("[yconhost] Codex startup import failed:", error instanceof Error ? error.message : error);
-    }
     this.startTemporaryCleanup();
   }
 
@@ -72,9 +70,13 @@ export class ConsoleManager {
     return [...names].map((name) => {
       const consoles = rows.filter((row) => row.project === name);
       return {
+        id: this.folders.get(name.toLowerCase())?.id,
+        type: this.folders.get(name.toLowerCase())?.type,
+        capabilities: this.folders.get(name.toLowerCase())?.capabilities,
+        error: this.folders.get(name.toLowerCase())?.error,
         name,
         gatherErrors: this.gatherErrorsDefault(name),
-        projectPath: consoles.find((row) => row.projectPath)?.projectPath,
+        projectPath: this.folders.get(name.toLowerCase())?.projectPath ?? consoles.find((row) => row.projectPath)?.projectPath,
         consoleCount: consoles.length,
         isLarge: consoles.length > 10,
         runningCount: consoles.filter((row) => row.status === "running").length,
@@ -133,7 +135,7 @@ export class ConsoleManager {
 
   private gatherErrorsDefault(project: string): boolean {
     const name = project.toLowerCase();
-    return this.projectGatherErrors.get(name) ?? (name !== "codexes" && name !== this.settings.codexContexts.projectName.toLowerCase());
+    return this.projectGatherErrors.get(name) ?? true;
   }
 
   setProjectGatherErrors(project: string, enabled: boolean): ProjectSummary {
@@ -151,7 +153,7 @@ export class ConsoleManager {
 
   setGatherErrors(id: string, enabled: boolean | null): ConsoleRecord {
     if (enabled !== null && typeof enabled !== "boolean") throw new Error("enabled must be a boolean or null");
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
     item.record.gatherErrorsOverride = enabled ?? undefined;
     this.applyGatherErrors(item, enabled ?? this.gatherErrorsDefault(item.record.project));
@@ -172,19 +174,79 @@ export class ConsoleManager {
     return this.createManaged(request, request.start === true && !request.noRun);
   }
 
-  importCodexContexts(request: CodexContextsImportRequest = {}): CodexContextsImportResult {
-    const project = request.project?.trim() || this.settings.codexContexts.projectName;
-    this.createProject(project);
-    const slots = loadCodexContextPresets({
-      project,
-      contextsPath: request.contextsPath ?? this.settings.codexContexts.contextsPath,
-      weztermPresetsPath: request.weztermPresetsPath ?? this.settings.codexContexts.weztermPresetsPath,
-      defaultCwd: process.cwd()
-    });
-    const consoles = slots.map((slot) => this.upsertManagedSlot(slot));
-    this.reorderProject(project, consoles.map((record) => record.id));
+  setFolderState(folder: FolderInfo): void {
+    this.folders.set(folder.name.toLowerCase(), folder);
+    this.managedProjects.add(folder.name);
+    this.projectGatherErrors.set(folder.name.toLowerCase(), folder.gatherErrors !== false);
+    for (const item of this.itemsForProject(folder.name)) {
+      item.record.folderId = folder.id;
+      item.record.capabilities = folder.capabilities;
+      if (item.record.gatherErrorsOverride === undefined && item.record.gatherErrors !== (folder.gatherErrors !== false)) this.applyGatherErrors(item, folder.gatherErrors !== false);
+    }
+  }
+
+  reconcileFolder(folder: FolderInfo, definitions: FolderItem[], capabilities: FolderCapabilities, remap?: { id: string; key: string }): ConsoleRecord[] {
+    const used = new Set<string>();
+    const records: ConsoleRecord[] = [];
+    for (const definition of definitions) {
+      const existing = this.itemsForProject(folder.name).find((item) =>
+        !used.has(item.record.id) && (remap?.key === definition.key ? item.record.id === remap.id :
+          item.record.sourceKey === definition.key || item.record.sourceKey === undefined && item.record.name === definition.name));
+      const shell = definition.shell ?? this.settings.defaultShell;
+      const command = definition.command ?? "";
+      const args = definition.args ?? (command ? commandArgs(shell, command) : []);
+      const cwd = path.resolve(definition.cwd || process.cwd());
+      const item = existing ?? this.requireConsole(this.createManaged({
+        project: folder.name, folderId: folder.id, name: definition.name, cwd, command, shell, args,
+        persistent: true, projectPath: folder.projectPath, background: definition.background
+      }, false).id);
+      const record = item.record;
+      record.pendingRestart = Boolean(item.session && item.activeLaunch !== JSON.stringify([command, cwd, shell, args]));
+      Object.assign(record, {
+        folderId: folder.id, sourceKey: definition.key, sourceValues: definition.values ?? {},
+        description: definition.description, name: definition.name, cwd, command, shell, args,
+        projectPath: folder.projectPath, background: definition.background,
+        backgroundColor: resolveConsoleBackground(definition.background), noRun: definition.noRun,
+        ansiParserEnabled: definition.ansiParserEnabled !== false, persistent: true,
+        readonly: definition.readonly === true, source: definition.readonly ? "external" : "managed",
+        orphaned: false, capabilities, updatedAt: new Date().toISOString()
+      });
+      if (record.readonly) {
+        record.gatherErrors = false;
+        record.pid = definition.external?.pid;
+        record.status = definition.external?.status ?? "idle";
+        record.lastOutputAt = definition.external?.lastOutputAt;
+      }
+      used.add(record.id);
+      records.push(record);
+    }
+    for (const item of this.itemsForProject(folder.name)) {
+      if (used.has(item.record.id)) continue;
+      if (item.session) item.record.orphaned = true;
+      else this.deleteManaged(item);
+    }
+    this.reorderProject(folder.name, records.map((item) => item.id));
     this.persist();
-    return { project, imported: consoles.length, consoles };
+    return records;
+  }
+
+  removeSlot(id: string): void {
+    this.deleteManaged(this.requireConsole(id));
+    this.persist();
+  }
+
+  updateManual(id: string, values: Record<string, string>): ConsoleRecord {
+    const item = this.requireConsole(id, true);
+    if (item.record.sourceKey !== undefined) throw new Error("Console is controlled by its source");
+    if (!values.name?.trim()) throw new Error("Console name is required");
+    const command = values.command ?? item.record.command;
+    const cwd = path.resolve(values.cwd || item.record.cwd);
+    item.record.pendingRestart = Boolean(item.session && item.activeLaunch !== JSON.stringify([command, cwd, item.record.shell, commandArgs(item.record.shell, command)]));
+    Object.assign(item.record, { name: values.name.trim(), description: values.description ?? "", command, cwd,
+      args: commandArgs(item.record.shell, command), background: values.background || undefined,
+      backgroundColor: resolveConsoleBackground(values.background), updatedAt: new Date().toISOString() });
+    this.persist();
+    return item.record;
   }
 
   private createManaged(request: ConsoleCreateRequest, startProcess: boolean): ConsoleRecord {
@@ -195,6 +257,11 @@ export class ConsoleManager {
     const now = new Date().toISOString();
     const record: ConsoleRecord = {
       id,
+      folderId: request.folderId,
+      sourceKey: request.sourceKey,
+      sourceValues: request.sourceValues,
+      description: request.description,
+      orphaned: request.orphaned,
       name: request.name ?? request.command ?? shell,
       project: request.project ?? "Default",
       projectPath: request.projectPath ? path.resolve(request.projectPath) : undefined,
@@ -248,6 +315,7 @@ export class ConsoleManager {
           dataDir: this.settings.dataDir
         });
         managed.session = session;
+        managed.activeLaunch = JSON.stringify([record.command, cwd, shell, args]);
         // A new native host uses absolute cursor positions from a fresh screen.
         // Keep older log/cards, but do not replay their terminal modes or screen contents into this run.
         if (this.settings.terminal.host === "yopenconsole") this.capture(managed, "\x1b[?1049l\x1b[!p\x1b[2J\x1b[H");
@@ -292,38 +360,13 @@ export class ConsoleManager {
     return record;
   }
 
-  private upsertManagedSlot(request: ConsoleRegisterRequest): ConsoleRecord {
-    const existing = this.findConsoleByProjectAndName(request.project, request.name ?? request.command ?? request.shell ?? "console");
-    if (!existing) {
-      return this.createManaged({
-        ...request,
-        id: managedConsoleId(request.project, request.name ?? request.command ?? request.shell ?? "console")
-      }, request.start === true && !request.noRun);
-    }
-
-    const shell = request.shell ?? this.settings.defaultShell;
-    const command = request.command ?? [shell, ...(request.args ?? [])].join(" ");
-    const cwd = path.resolve(request.cwd ?? existing.record.cwd);
-    existing.record.cwd = cwd;
-    existing.record.command = command;
-    existing.record.shell = shell;
-    existing.record.args = request.args ?? (request.command ? commandArgs(shell, request.command) : []);
-    existing.record.noRun = request.noRun;
-    existing.record.autoStartOnOpen = request.autoStartOnOpen;
-    existing.record.persistent = request.persistent ?? existing.record.persistent ?? true;
-    existing.record.ansiParserEnabled = request.ansiParserEnabled ?? true;
-    existing.record.background = request.background;
-    existing.record.backgroundColor = request.backgroundColor ?? resolveConsoleBackground(request.background);
-    existing.record.updatedAt = new Date().toISOString();
-    return existing.record;
-  }
-
   rename(id: string, name: string): ConsoleRecord {
     const trimmed = name.trim();
     if (!trimmed) {
       throw new Error("Console name is required");
     }
     const item = this.requireConsole(id);
+    if (item.record.sourceKey !== undefined) throw new Error("Use the folder update operation to rename a source entry");
     this.touchAccess(item);
     item.record.name = trimmed;
     item.record.updatedAt = new Date().toISOString();
@@ -331,12 +374,12 @@ export class ConsoleManager {
     return item.record;
   }
 
-  createBatch(projectPath: string, fileName?: string, options: { removeMissing?: boolean } = {}): ConsoleRecord[] {
+  createBatch(projectPath: string, fileName?: string, options: { removeMissing?: boolean; startNew?: boolean; projectName?: string } = {}): ConsoleRecord[] {
     if (!projectPath || typeof projectPath !== "string") {
       throw new Error("projectPath is required");
     }
     const resolvedProjectPath = path.resolve(projectPath);
-    const projectName = path.basename(resolvedProjectPath);
+    const projectName = options.projectName ?? path.basename(resolvedProjectPath);
     const candidates = fileName ? [fileName] : ["mywins.json", "my_wins.json"];
     const configPath = candidates.map((candidate) => path.join(resolvedProjectPath, candidate)).find((candidate) => fs.existsSync(candidate));
     if (!configPath) {
@@ -377,7 +420,7 @@ export class ConsoleManager {
         return existing.record;
       }
 
-      const record = this.createManaged(request, !request.noRun);
+      const record = this.createManaged(request, options.startNew !== false && !request.noRun);
       orderedIds.push(record.id);
       return record;
     });
@@ -385,7 +428,8 @@ export class ConsoleManager {
       const keep = new Set(orderedIds);
       for (const item of [...this.consoles.values()]) {
         if (item.record.projectPath && path.resolve(item.record.projectPath).toLowerCase() === resolvedProjectPath.toLowerCase() && !keep.has(item.record.id)) {
-          this.deleteManaged(item);
+          if (item.session) item.record.orphaned = true;
+          else this.deleteManaged(item);
         }
       }
     }
@@ -400,7 +444,7 @@ export class ConsoleManager {
     if (!projectPath) {
       throw new Error(`Project ${project} has no mywins.json project path`);
     }
-    return this.createBatch(projectPath, undefined, { removeMissing: true });
+    return this.createBatch(projectPath, undefined, { removeMissing: true, projectName: project });
   }
 
   getMywinsEntry(id: string): MywinsEntry {
@@ -423,7 +467,8 @@ export class ConsoleManager {
     if (nextName !== currentName && wins[nextName]) throw new Error(`Console ${nextName} already exists in ${path.basename(configPath)}`);
     parsed.wins = replaceMywinsEntry(wins, currentName, nextName, entryToConfig(entry));
     writeMywinsFile(configPath, parsed);
-    return this.createBatch(item.record.projectPath!, undefined, { removeMissing: true });
+    item.record.name = nextName;
+    return this.createBatch(item.record.projectPath!, undefined, { removeMissing: true, startNew: false, projectName: item.record.project });
   }
 
   addMywinsEntry(project: string, entry: MywinsEntry): ConsoleRecord[] {
@@ -435,7 +480,7 @@ export class ConsoleManager {
     if (wins[name]) throw new Error(`Console ${name} already exists in ${path.basename(configPath)}`);
     parsed.wins = { ...wins, [name]: entryToConfig({ ...entry, name }) };
     writeMywinsFile(configPath, parsed);
-    return this.createBatch(projectPath, undefined, { removeMissing: true });
+    return this.createBatch(projectPath, undefined, { removeMissing: true, startNew: false, projectName: project });
   }
 
   deleteMywinsEntry(id: string): ConsoleRecord[] {
@@ -445,7 +490,8 @@ export class ConsoleManager {
     const { [item.record.name]: _removed, ...nextWins } = parsed.wins;
     parsed.wins = nextWins;
     writeMywinsFile(configPath, parsed);
-    return this.createBatch(item.record.projectPath!, undefined, { removeMissing: true });
+    this.deleteManaged(item);
+    return this.createBatch(item.record.projectPath!, undefined, { removeMissing: true, startNew: false, projectName: item.record.project });
   }
 
   recentProjects(): RecentProject[] {
@@ -463,7 +509,7 @@ export class ConsoleManager {
   }
 
   write(id: string, data: string): void {
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
@@ -476,7 +522,7 @@ export class ConsoleManager {
   }
 
   async runCommand(id: string, command: string, options: { wait?: boolean; timeoutMs?: number } = {}): Promise<{ status: "started" | "completed"; id: string; command: string; output?: string; exitCode?: number; timedOut?: boolean }> {
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
@@ -530,7 +576,7 @@ export class ConsoleManager {
   }
 
   resize(id: string, cols: number, rows: number): void {
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
     const safeCols = Math.max(20, Math.min(400, Math.floor(cols)));
     const safeRows = Math.max(5, Math.min(200, Math.floor(rows)));
@@ -540,7 +586,7 @@ export class ConsoleManager {
   }
 
   async nativeWindow(id: string, visible?: boolean) {
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
     const session = item.session;
     if (!session?.nativeWindow) throw new Error("Native CLI requires a running yopenconsole session");
@@ -551,7 +597,7 @@ export class ConsoleManager {
   }
 
   signal(id: string, signal: string): void {
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
@@ -568,7 +614,7 @@ export class ConsoleManager {
   }
 
   restart(id: string): ConsoleRecord {
-    const old = this.requireConsole(id);
+    const old = this.requireConsole(id, true);
     this.touchAccess(old);
     const request = this.requestFromRecord(old.record, true);
     old.session?.kill();
@@ -578,7 +624,7 @@ export class ConsoleManager {
   }
 
   start(id: string): ConsoleRecord {
-    const old = this.requireConsole(id);
+    const old = this.requireConsole(id, true);
     this.touchAccess(old);
     if (old.session) return old.record;
     const request = this.requestFromRecord(old.record, true);
@@ -588,7 +634,7 @@ export class ConsoleManager {
   }
 
   stop(id: string): void {
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
     if (item.session) {
       item.session.kill();
@@ -626,6 +672,7 @@ export class ConsoleManager {
       this.deleteManaged(item);
     }
     this.managedProjects.delete(project);
+    this.folders.delete(project.toLowerCase());
     this.projectGatherErrors.delete(project.toLowerCase());
     this.projectStore?.removeManagedProject(project);
     this.persist();
@@ -660,9 +707,9 @@ export class ConsoleManager {
   }
 
   kill(id: string): void {
-    const item = this.requireConsole(id);
+    const item = this.requireConsole(id, true);
     this.touchAccess(item);
-    if (item.record.project === "Default" || item.record.persistent === false) {
+    if ((this.folders.get(item.record.project.toLowerCase())?.closeRemoves ?? item.record.project === "Default") || item.record.persistent === false) {
       this.deleteManaged(item);
       this.persist();
       return;
@@ -720,11 +767,12 @@ export class ConsoleManager {
     }
   }
 
-  private requireConsole(id: string): ManagedConsole {
+  private requireConsole(id: string, writable = false): ManagedConsole {
     const item = this.consoles.get(id);
     if (!item) {
       throw new Error(`Console ${id} not found`);
     }
+    if (writable && item.record.readonly) throw new Error(`Console ${id} is readonly`);
     return item;
   }
 
@@ -786,6 +834,11 @@ export class ConsoleManager {
   private requestFromRecord(record: ConsoleRecord, preserveId = false): ConsoleCreateRequest {
     return {
       id: preserveId ? record.id : undefined,
+      folderId: record.folderId,
+      sourceKey: record.sourceKey,
+      sourceValues: record.sourceValues,
+      description: record.description,
+      orphaned: record.orphaned,
       lastStartedAt: record.lastStartedAt,
       createdAt: record.createdAt,
       name: record.name,
@@ -853,7 +906,7 @@ export class ConsoleManager {
   }
 
   private projectPathForProject(project: string): string {
-    const projectPath = this.itemsForProject(project).find((item) => item.record.projectPath)?.record.projectPath;
+    const projectPath = this.folders.get(project.toLowerCase())?.projectPath ?? this.itemsForProject(project).find((item) => item.record.projectPath)?.record.projectPath;
     if (!projectPath) {
       throw new Error(`Project ${project} has no mywins.json project path`);
     }
@@ -876,10 +929,6 @@ interface MywinsDocument {
 
 function batchConsoleId(projectPath: string, name: string): string {
   return `batch-${crypto.createHash("sha1").update(`${path.resolve(projectPath).toLowerCase()}\0${name}`).digest("hex")}`;
-}
-
-function managedConsoleId(project: string, name: string): string {
-  return `managed-${crypto.createHash("sha1").update(`${project.toLowerCase()}\0${name}`).digest("hex")}`;
 }
 
 function findMywinsPath(projectPath: string, fileName?: string): string {
@@ -938,52 +987,6 @@ function replaceMywinsEntry(wins: Record<string, BatchWinConfig>, currentName: s
     }
   }
   return next;
-}
-
-function resolveConsoleBackground(value?: string): ThemeColorPair | undefined {
-  const raw = value?.trim();
-  if (!raw) return undefined;
-  const std = stdBackground(raw);
-  if (std) return std;
-  const rgb = parseRgb(raw);
-  return rgb ? { dark: rgbToCss(rgb), light: rgbToCss(rgb) } : undefined;
-}
-
-function stdBackground(value: string): ThemeColorPair | undefined {
-  const key = value.trim().toUpperCase();
-  const channels: Record<string, [number, number, number]> = {
-    STD_BLACK: [0, 0, 0],
-    STD_RED: [1, 0, 0],
-    STD_GREEN: [0, 1, 0],
-    STD_BLUE: [0, 0, 1],
-    STD_YELLOW: [1, 1, 0],
-    STD_CYAN: [0, 1, 1],
-    STD_MAGENTA: [1, 0, 1],
-    STD_WHITE: [1, 1, 1],
-    STD_GRAY: [1, 1, 1],
-    STD_GREY: [1, 1, 1]
-  };
-  const channel = channels[key];
-  if (!channel) return undefined;
-  const dark = channel.map((enabled) => (enabled ? 20 : 12)) as [number, number, number];
-  const light = channel.map((enabled) => (enabled ? 255 : 247)) as [number, number, number];
-  return { dark: rgbToCss(dark), light: rgbToCss(light) };
-}
-
-function parseRgb(value: string): [number, number, number] | undefined {
-  const match = value.match(/^#?([0-9a-f]{6})$/i);
-  if (match) {
-    const hex = match[1];
-    return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16)];
-  }
-  const rgb = value.match(/^rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i) ?? value.match(/^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/);
-  if (!rgb) return undefined;
-  const parsed = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] as [number, number, number];
-  return parsed.every((item) => Number.isInteger(item) && item >= 0 && item <= 255) ? parsed : undefined;
-}
-
-function rgbToCss(rgb: [number, number, number]): string {
-  return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
 }
 
 function temporaryConsoleTtlMs(settings: AppSettings): number {

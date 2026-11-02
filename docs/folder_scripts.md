@@ -1,0 +1,110 @@
+# Папки и серверные JS-источники
+
+Реализация универсальных папок: `manual`, `my_wins`, `scripted`. Старый
+`import_codex_contexts` и `/api/codex-contexts/import` удалены. Обновление источника
+вызывает экспорт **`list`**, не `refresh`. Общий клиентский polling не вызывает JS.
+
+## Контракт
+
+Одна scripted-папка соответствует одному локальному JS-модулю. В Settings задаются
+абсолютный путь к модулю и интервал в секундах. `0` означает только ручное обновление
+и обновление после CRUD. Обязателен `list(context)`, остальные функции необязательны.
+Рекомендуемый формат файла — ESM `.mjs`.
+
+```js
+export function list(context) {
+  return [{
+    key: "stable-source-key",
+    name: "Build",
+    command: "npm run build",
+    cwd: "D:/work/project",
+    background: "STD_GREEN",
+    values: { name: "Build", description: "", background: "STD_GREEN" }
+  }];
+}
+
+export function defineFields(context) {
+  return [
+    { name: "name", label: "Name", type: "string", required: true },
+    { name: "description", label: "Description", type: "string" },
+    { name: "background", label: "Background", type: "color" }
+  ];
+}
+
+export async function create(context, values) { /* write source */ }
+export async function update(context, original, values) {
+  // Write source; when the source key changes, return its new value.
+  return { key: "new-source-key" };
+}
+async function remove(context, original) { /* disable/delete source entry */ }
+export { remove as delete };
+```
+
+`context` содержит `folder: { id, name }` и `dataDir`. `original` содержит исходные
+`key`, `name` и `values` записи. `values` — словарь строк. Без `defineFields` форма
+содержит только `name` и `description`. Поддерживаются типы `string` и `color`.
+Успешный create/update/delete перечитывает источник через `list`.
+
+`key` и `name` должны быть непустыми и уникальными внутри выдачи. Внутренний ID
+yconhost отличается от изменяемого ключа источника. При смене ключа через update
+возвращать `{ key }`, чтобы сохранить консоль, историю и процесс. Миграция старых
+слотов сопоставляет их по прежнему имени. Внешняя одновременная смена всех ключей
+не распознаётся как переименование.
+
+Скрипт выполняется в worker с лимитом времени 10 секунд и результата 10 MB; до
+10000 элементов, до 64 полей формы. Операции одной папки последовательны. Ручной
+List source перезагружает модуль. Периодические вызовы используют загруженный JS.
+Ошибка сохраняет последний успешный состав и видна у папки. Это доверенный Node.js,
+а не защитная песочница: доступ к FS и запуску программ остаётся у скрипта.
+
+Состав создаёт только idle-слоты. Изменение команды/cwd работающей консоли помечает
+необходимость Restart, но не перезапускает её. Пропавший работающий элемент остаётся
+`orphaned`; пропавший idle-слот убирается, логи не удаляются. Смена типа/пути источника
+требует `confirmed=true` и пересоздаёт папку с прежним именем. Внешние файлы и чужие
+процессы при пересоздании не удаляются.
+
+## Цвет
+
+Редактор `color` использует react-colorful в Ariakit Dialog. В нём STD-палитра,
+произвольный HEX и сброс к Default. Apply меняет черновик формы; источник записывается
+только её Save. Cancel/Escape отменяют выбор. STD-токены сохраняются без превращения
+в RGB: например, STD_RED отображается как `(20,12,12)` в dark и `(255,247,247)` в light.
+
+## Codex/Claude и PM2
+
+При первом запуске миграция создаёт JS-файлы в `dataDir/folder-scripts` и регистрирует
+папки. Старые `codexContexts` настройки читаются только для этой миграции; дальнейшая
+конфигурация путей находится в созданном JS. Исходные Markdown/Lua не переписываются
+при миграции. Маркер `folder-sources-v1.json` предотвращает повторное добавление
+закрытой папки. Папки и их настройки хранятся в прежнем `managed-projects.json`.
+
+Скрипт Codex/Claude возвращает поля name/description/session_id/cwd/background,
+поддерживает `Color:` HEX/RGB/STD и обратимое удаление через `# DELETED ...`.
+Имя и session_id редактируются отдельно. Конфликт внешнего изменения раздела
+выдаёт ошибку; форма восстанавливает исходные значения. Lua-пресет при первом
+изменении получает Markdown-переопределение; Lua остаётся неизменным.
+
+Для чужих процессов скрипт возвращает `readonly: true`, `external` со статусом/PID
+и экспортирует `readOutput(context, original, { tailLines })`. Ядро не создаёт
+и не контролирует такие процессы. PM2 — такой источник; лог читается ограниченным
+хвостом файлов, STDOUT/STDERR помечены отдельно. Его интервал по умолчанию 2 секунды,
+у Codex/Claude — 60 секунд. Ошибка PM2 не блокирует другие папки и health.
+
+## HTTP/MCP
+
+- `POST /api/projects`: name/type/scriptPath/projectPath/intervalSeconds/defaults.
+- `GET|PUT /api/projects/:project/settings`: настройки; confirmed при пересоздании.
+- `POST /api/projects/:project/list`: перечитать JS и вызвать list.
+- `GET /api/projects/:project/fields`: форма новой записи.
+- `POST /api/projects/:project/entries`: `{ values }`.
+- `GET|PUT /api/consoles/:id/entry`: форма/изменение `{ values }`.
+- `DELETE /api/consoles/:id/entry`: `{ confirmed: true }`.
+
+MCP: `create_project`, `get_folder_settings`, `update_folder_settings`, `list_folder`,
+`get_folder_fields`, `create_folder_entry`, `update_folder_entry`, `delete_folder_entry`.
+Старые команды запуска/ввода и ожидания выполнения остаются для owned-консолей.
+`create_console`/`register_console` предназначены только для manual-папок и сохраняют
+временность по умолчанию. Источники меняются только через их CRUD-операции.
+
+Проверка внедрения выполняется на отдельном dataDir и порту; остановка живого сервиса
+не является частью автоматической проверки.

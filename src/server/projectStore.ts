@@ -63,6 +63,14 @@ export class ProjectStore {
     return updated;
   }
 
+  saveProject(project: ManagedProject): void {
+    const current = this.listManagedProjects();
+    const index = current.findIndex((item) => Boolean(project.id && item.id === project.id) || item.name.toLowerCase() === project.name.toLowerCase());
+    if (index < 0) current.push(project);
+    else current[index] = project;
+    this.saveManagedProjects(current);
+  }
+
   private save(items: RecentProject[]): void {
     fs.writeFileSync(this.file, `${JSON.stringify(items, null, 2)}\n`, "utf8");
   }
