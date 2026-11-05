@@ -8,6 +8,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { selectProjectConsoles } from "./projectConsoles.js";
 import { isWindowsTerminalReply } from "./terminalInput.js";
+import { currentScreenText } from "./terminalScreen.js";
+import { ScreenSelection, type ScreenSnapshot } from "./ScreenSelection.js";
 import { unreadCards } from "./cards.js";
 import { readableForeground } from "../shared/colors.js";
 import type { NativeWindowState, ProjectSummary } from "../server/types.js";
@@ -1009,6 +1011,8 @@ function TerminalPane({
   const [nativeError, setNativeError] = useState("");
   const [gatherBusy, setGatherBusy] = useState(false);
   const [gatherError, setGatherError] = useState("");
+  const [screenSelection, setScreenSelection] = useState<{ terminal: Terminal; snapshot: ScreenSnapshot; consoleId: string } | null>(null);
+  const [selecting, setSelecting] = useState(false);
   const nativeRef = useRef(consoleRecord.nativeCli);
   const fitRef = useRef<FitAddon | null>(null);
   const consoleIdRef = useRef(consoleRecord.id);
@@ -1032,6 +1036,33 @@ function TerminalPane({
   function scrollToTerminal(behavior: ScrollBehavior = "smooth") {
     stageRef.current?.scrollIntoView({ block: "end", behavior });
   }
+
+  function selectScreen() {
+    const terminal = terminalRef.current;
+    if (!terminal || selecting) return;
+    setSelecting(true);
+    // Drain queued output before reading the active screen, without resetting terminal modes.
+    terminal.write("", () => {
+      if (terminalRef.current !== terminal) return;
+      setSelecting(false);
+      setScreenSelection({ terminal, consoleId: consoleRecord.id, snapshot: {
+        text: currentScreenText(terminal),
+        fontFamily: terminal.options.fontFamily ?? "courier-new, courier, monospace",
+        fontSize: terminal.options.fontSize ?? 15,
+        lineHeight: (hostRef.current?.querySelector(".xterm-screen")?.getBoundingClientRect().height ?? 0) / terminal.rows || (terminal.options.fontSize ?? 15) * 1.2,
+        background: terminal.options.theme?.background ?? terminalBackground,
+        foreground: terminal.options.theme?.foreground ?? terminalThemes[theme].foreground
+      } });
+    });
+  }
+
+  function closeScreenSelection() {
+    const terminal = screenSelection?.terminal;
+    setScreenSelection(null);
+    window.requestAnimationFrame(() => { if (terminalRef.current === terminal) terminal?.focus(); });
+  }
+
+  useEffect(() => { setScreenSelection(null); setSelecting(false); }, [consoleRecord.id, consoleRecord.lastStartedAt, theme, terminalBackground, canRestart, isReadonly]);
 
   useEffect(() => {
     if (!isReadonly && !canRestart) return;
@@ -1261,6 +1292,7 @@ function TerminalPane({
             </p>
           </div>
           <div className="toolbar-actions">
+            <button disabled={selecting || !isReadonly && !canRestart} aria-pressed={Boolean(screenSelection)} onClick={() => screenSelection ? closeScreenSelection() : selectScreen()}>Выделить</button>
             <label className="gather-errors-control">
               <input type="checkbox" checked={touchMode} onChange={(event) => onTouchModeChange(event.target.checked)} />
               Touch mode
@@ -1285,8 +1317,9 @@ function TerminalPane({
       {nativeError ? <div role="alert">{nativeError}</div> : null}
       {!cardsCollapsed ? <CardsPanel cards={filteredCards} /> : null}
       <div className="terminal-stage" ref={stageRef}>
-        <div ref={hostRef} className="terminal-host" hidden={!isReadonly && !canRestart} />
+        <div ref={hostRef} className="terminal-host" hidden={!isReadonly && !canRestart} inert={Boolean(screenSelection)} />
         {!isReadonly && !canRestart ? <DisabledConsoleOverlay consoleRecord={consoleRecord} /> : null}
+        {screenSelection?.consoleId === consoleRecord.id ? <ScreenSelection snapshot={screenSelection.snapshot} onClose={closeScreenSelection} /> : null}
       </div>
       {debugMode ? <ErrorDebugPanel matches={cards.map((card) => ({ id: card.id, createdAt: card.createdAt, line: card.title, reason: `${card.kind} ${card.category}` }))} /> : null}
       {!atTerminal ? (
