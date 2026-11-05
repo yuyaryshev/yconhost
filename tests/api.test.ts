@@ -374,6 +374,34 @@ describe("HTTP API", () => {
     expect(managedManager.get(keepSlot.id)).toMatchObject({ id: keepSlot.id, persistent: true });
   });
 
+  it("defaults MCP console creation to AGENTS_TEMP without changing HTTP defaults or explicit projects", async () => {
+    const call = (name: string, args: object) => request(app).post("/mcp")
+      .send({ method: "tools/call", params: { name, arguments: args } }).expect(200);
+    for (const name of ["create_console", "register_console"]) {
+      const response = await call(name, { name, command: "echo temp", cwd: dir });
+      expect(response.body.result.isError).not.toBe(true);
+      expect(JSON.parse(response.body.result.content[0].text)).toMatchObject({
+        project: "AGENTS_TEMP", persistent: false, status: name === "register_console" ? "idle" : "running"
+      });
+      const explicit = await call(name, { project: "Other", name: `${name}-explicit`, cwd: dir, persistent: true });
+      expect(JSON.parse(explicit.body.result.content[0].text)).toMatchObject({ project: "Other", persistent: true });
+    }
+    expect(manager.listProjects()).toContainEqual(expect.objectContaining({ name: "AGENTS_TEMP", type: "manual", consoleCount: 2 }));
+    const tools = await request(app).post("/mcp").send({ method: "tools/list" }).expect(200);
+    for (const name of ["create_console", "register_console"]) {
+      const tool = tools.body.result.tools.find((tool: { name: string }) => tool.name === name);
+      expect(tool.description).toContain("preferred for one-off agent requests");
+      expect(tool.inputSchema.properties.project.default).toBe("AGENTS_TEMP");
+      expect(tool.inputSchema.required ?? []).not.toContain("project");
+    }
+    const http = await request(app).post("/api/consoles").send({ name: "UI console", cwd: dir }).expect(200);
+    expect(http.body.project).toBe("Default");
+    const deleted = manager.cleanupTemporaryConsoles(new Date(Date.now() + 5 * 60 * 60 * 1000));
+    expect(deleted).toHaveLength(2);
+    expect(manager.list("AGENTS_TEMP")).toHaveLength(0);
+    expect(manager.list("Other")).toHaveLength(2);
+  });
+
   it("expires running temporary shells but preserves recently read or productive sessions", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
