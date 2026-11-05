@@ -48,12 +48,12 @@ export function ScreenSelection({ snapshot, onClose }: { snapshot: ScreenSnapsho
     onPointerDown={(event) => event.stopPropagation()}>
     <div className="screen-selection-toolbar">
       <span>Выделить</span>
-      <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => void copySelection()}>Копировать</button>
-      <button type="button" className="screen-selection-close" title="Закрыть выделение" aria-label="Закрыть выделение" onClick={close}>&#215;</button>
+      <button type="button" className="secondary-button" onMouseDown={(event) => event.preventDefault()} onClick={() => void copySelection()}>Копировать</button>
+      <button type="button" className="secondary-button screen-selection-close" title="Закрыть выделение" aria-label="Закрыть выделение" onClick={close}>&#215;</button>
     </div>
     <textarea ref={textarea} className="screen-selection-text" aria-label="Текст текущего экрана" readOnly spellCheck={false}
       value={snapshot.text} style={{ fontFamily: snapshot.fontFamily, fontSize: snapshot.fontSize, lineHeight: `${snapshot.lineHeight}px` }}
-      onPointerUp={(event) => { if (event.pointerType === "mouse" || event.pointerType === "pen") void copySelection(); }}
+      onPointerUp={(event) => { if (event.button === 0 && (event.pointerType === "mouse" || event.pointerType === "pen")) void copySelection(); }}
       onCopy={(event) => {
         const text = selectedText();
         if (!text) return;

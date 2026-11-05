@@ -1013,6 +1013,7 @@ function TerminalPane({
   const [gatherError, setGatherError] = useState("");
   const [screenSelection, setScreenSelection] = useState<{ terminal: Terminal; snapshot: ScreenSnapshot; consoleId: string } | null>(null);
   const [selecting, setSelecting] = useState(false);
+  const [screenReady, setScreenReady] = useState(false);
   const nativeRef = useRef(consoleRecord.nativeCli);
   const fitRef = useRef<FitAddon | null>(null);
   const consoleIdRef = useRef(consoleRecord.id);
@@ -1039,7 +1040,7 @@ function TerminalPane({
 
   function selectScreen() {
     const terminal = terminalRef.current;
-    if (!terminal || selecting) return;
+    if (!terminal || selecting || !screenReady) return;
     setSelecting(true);
     // Drain queued output before reading the active screen, without resetting terminal modes.
     terminal.write("", () => {
@@ -1053,6 +1054,7 @@ function TerminalPane({
         background: terminal.options.theme?.background ?? terminalBackground,
         foreground: terminal.options.theme?.foreground ?? terminalThemes[theme].foreground
       } });
+      window.requestAnimationFrame(() => stageRef.current?.scrollIntoView({ block: "start", behavior: "auto" }));
     });
   }
 
@@ -1065,6 +1067,7 @@ function TerminalPane({
   useEffect(() => { setScreenSelection(null); setSelecting(false); }, [consoleRecord.id, consoleRecord.lastStartedAt, theme, terminalBackground, canRestart, isReadonly]);
 
   useEffect(() => {
+    setScreenReady(false);
     if (!isReadonly && !canRestart) return;
     const terminal = new Terminal({
       cursorBlink: true,
@@ -1092,7 +1095,14 @@ function TerminalPane({
 
     fetch(`/api/consoles/${consoleRecord.id}/output`)
       .then((response) => response.json())
-      .then((data: { output: string }) => terminal.write(data.output, () => window.setTimeout(() => scrollToTerminal("auto"), 0)));
+      .then((data: { output: string }) => {
+        if (disposed) return;
+        terminal.write(data.output, () => {
+          if (disposed) return;
+          setScreenReady(true);
+          window.setTimeout(() => scrollToTerminal("auto"), 0);
+        });
+      });
 
     const sendInput = (data: string) => {
       if (isReadonly || isWindowsTerminalReply(consoleRecord.shell, data)) return;
@@ -1292,7 +1302,7 @@ function TerminalPane({
             </p>
           </div>
           <div className="toolbar-actions">
-            <button disabled={selecting || !isReadonly && !canRestart} aria-pressed={Boolean(screenSelection)} onClick={() => screenSelection ? closeScreenSelection() : selectScreen()}>Выделить</button>
+            <button disabled={selecting || !screenReady || !isReadonly && !canRestart} aria-pressed={Boolean(screenSelection)} onClick={() => screenSelection ? closeScreenSelection() : selectScreen()}>Выделить</button>
             <label className="gather-errors-control">
               <input type="checkbox" checked={touchMode} onChange={(event) => onTouchModeChange(event.target.checked)} />
               Touch mode
