@@ -5,7 +5,7 @@ import type { AppSettings } from "./types.js";
 
 const defaults: AppSettings = {
   host: process.env.YCONHOST_HOST ?? "127.0.0.1",
-  port: Number(process.env.YCONHOST_PORT ?? 4000),
+  port: Number(process.env.YCONHOST_PORT ?? 4011),
   dataDir: process.env.YCONHOST_DATA_DIR ?? path.resolve("data"),
   defaultShell: process.platform === "win32" ? "cmd.exe" : process.env.SHELL ?? "bash",
   terminal: {

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readJsonArray, writeJsonArray } from "./jsonStore.js";
 import type { AppSettings, ConsoleDefinition, ConsoleRecord } from "./types.js";
 
 export class ConsoleStore {
@@ -11,10 +12,7 @@ export class ConsoleStore {
   }
 
   load(): ConsoleDefinition[] {
-    if (!fs.existsSync(this.file)) {
-      return [];
-    }
-    return JSON.parse(fs.readFileSync(this.file, "utf8")) as ConsoleDefinition[];
+    return readJsonArray<ConsoleDefinition>(this.file);
   }
 
   save(records: ConsoleRecord[]): void {
@@ -48,6 +46,6 @@ export class ConsoleStore {
       gatherErrors: record.gatherErrorsOverride,
       readCardHashes: record.readCardHashes
     }));
-    fs.writeFileSync(this.file, `${JSON.stringify(definitions, null, 2)}\n`, "utf8");
+    writeJsonArray(this.file, definitions);
   }
 }

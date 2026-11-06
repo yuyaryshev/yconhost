@@ -9,7 +9,8 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         YCONHOST_HOST: "127.0.0.1",
-        YCONHOST_PORT: "4011"
+        YCONHOST_PORT: "4011",
+        YCONHOST_SETTINGS_PATH: require("node:path").join(__dirname, "settings.json5")
       }
     }
   ]

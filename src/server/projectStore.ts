@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readJsonArray, writeJsonArray } from "./jsonStore.js";
 import type { AppSettings, ManagedProject, RecentProject } from "./types.js";
 
 export class ProjectStore {
@@ -13,8 +14,7 @@ export class ProjectStore {
   }
 
   list(): RecentProject[] {
-    if (!fs.existsSync(this.file)) return [];
-    return JSON.parse(fs.readFileSync(this.file, "utf8")) as RecentProject[];
+    return readJsonArray<RecentProject>(this.file);
   }
 
   touch(projectPath: string): RecentProject[] {
@@ -33,8 +33,7 @@ export class ProjectStore {
   }
 
   listManagedProjects(): ManagedProject[] {
-    if (!fs.existsSync(this.managedProjectsFile)) return [];
-    return JSON.parse(fs.readFileSync(this.managedProjectsFile, "utf8")) as ManagedProject[];
+    return readJsonArray<ManagedProject>(this.managedProjectsFile);
   }
 
   createManagedProject(name: string): ManagedProject {
@@ -72,10 +71,10 @@ export class ProjectStore {
   }
 
   private save(items: RecentProject[]): void {
-    fs.writeFileSync(this.file, `${JSON.stringify(items, null, 2)}\n`, "utf8");
+    writeJsonArray(this.file, items);
   }
 
   private saveManagedProjects(items: ManagedProject[]): void {
-    fs.writeFileSync(this.managedProjectsFile, `${JSON.stringify(items, null, 2)}\n`, "utf8");
+    writeJsonArray(this.managedProjectsFile, items);
   }
 }

@@ -28,7 +28,10 @@ yconhost is a local web UI/API for supervising host command processes through a 
 - `pnpm build` - build server and client.
 - `pnpm start` - run the production build.
 
-The production pm2 config is in `ecosystem.config.cjs` and currently binds to `127.0.0.1:4010` because port `4000` is already used on this host.
+The fixed production address is **http://127.0.0.1:4011/**. The default server port,
+local `settings.json5`, and `ecosystem.config.cjs` use port `4011`. PM2 pins the
+absolute settings path; the server does not silently choose another port if this
+one is occupied. Explicit port overrides are only needed for isolated tests.
 
 ## API
 
