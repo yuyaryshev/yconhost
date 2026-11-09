@@ -6,6 +6,7 @@ export interface FolderField {
   type: "string" | "color";
   required?: boolean;
   defaultValue?: string;
+  multiline?: boolean;
 }
 
 export interface FolderCapabilities {
@@ -39,6 +40,8 @@ export interface SourceMetadata {
   sourceKey?: string;
   sourceValues?: Record<string, string>;
   description?: string;
+  pinned_text?: string;
+  pinnedVariables?: Record<string, string>;
   orphaned?: boolean;
   pendingRestart?: boolean;
 }
@@ -47,6 +50,8 @@ export interface FolderItem {
   key: string;
   name: string;
   description?: string;
+  pinned_text?: string;
+  pinnedVariables?: Record<string, string>;
   values?: Record<string, string>;
   command?: string;
   cwd?: string;

@@ -10,6 +10,7 @@ import { selectProjectConsoles } from "./projectConsoles.js";
 import { isWindowsTerminalReply } from "./terminalInput.js";
 import { currentScreenText } from "./terminalScreen.js";
 import { ScreenSelection, type ScreenSnapshot } from "./ScreenSelection.js";
+import { PinnedText } from "./PinnedTextPanel.js";
 import { unreadCards } from "./cards.js";
 import { readableForeground } from "../shared/colors.js";
 import type { NativeWindowState, ProjectSummary } from "../server/types.js";
@@ -45,6 +46,8 @@ type ConsoleRecord = {
   orphaned?: boolean;
   pendingRestart?: boolean;
   description?: string;
+  pinned_text?: string;
+  pinnedVariables?: Record<string, string>;
   capabilities?: FolderCapabilities;
   nativeCli?: NativeWindowState;
 };
@@ -1325,6 +1328,7 @@ function TerminalPane({
         {gatherError ? <div role="alert">{gatherError}</div> : null}
       </div>, toolbarHost) : null}
       {nativeError ? <div role="alert">{nativeError}</div> : null}
+      <PinnedText key={consoleRecord.id} text={consoleRecord.pinned_text} variables={consoleRecord.pinnedVariables} />
       {!cardsCollapsed ? <CardsPanel cards={filteredCards} /> : null}
       <div className="terminal-stage" ref={stageRef}>
         <div ref={hostRef} className="terminal-host" hidden={!isReadonly && !canRestart} inert={Boolean(screenSelection)} />

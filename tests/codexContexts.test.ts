@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createCodexFolder } from "../src/server/folders/codexes.mjs";
+import { addDefaultPinnedTextBlocks, createCodexFolder, defaultPinnedText, parseSections } from "../src/server/folders/codexes.mjs";
 
 describe("agent context import", () => {
   let dir: string;
@@ -74,5 +74,43 @@ describe("agent context import", () => {
       { name: "First", code: "ycodex resume repeated-id" },
       { name: "Second", code: "ycodex resume repeated-id" }
     ])).toThrow('Duplicate source session/key "repeated-id" in "First" and "Second"');
+  });
+
+  it("materializes pinned defaults idempotently without changing launches, CRLF or unrelated notes", () => {
+    const before = '# Agent\r\nColor: STD_GREEN\r\n\r\n```cmd\r\ncd /d "D:\\My Project" && ycodex resume saved\r\n```\r\n\r\n# Notes\r\nkeep this\r\n';
+    const after = addDefaultPinnedTextBlocks(before, dir);
+    const launch = (text: string) => parseSections(text, dir).map((item) => [item.name, item.command, item.cwd, item.background]);
+    expect(launch(after)).toEqual(launch(before));
+    expect(after).toContain("```pinned_text\r\n");
+    expect(after).toContain("# Notes\r\nkeep this\r\n");
+    expect(after.split("```pinned_text")).toHaveLength(2);
+    expect(addDefaultPinnedTextBlocks(after, dir)).toBe(after);
+    expect(parseSections(after, dir)[0].pinned_text).toBe(defaultPinnedText);
+  });
+
+  it("keeps pinned Markdown headings and agent-like text out of the command parser, with lossless edits and clearing", () => {
+    load([{ name: "Agent", code: "ycodex resume real-session" }]);
+    const source = createCodexFolder({ contextsPath, defaultCwd: dir });
+    let item = source.list()[0];
+    const notes = '# not a folder\n```cmd\nycodex resume wrong-session\n```\nD:\\path with spaces\n{{session_id}}\n';
+    source.update({}, item.values, { ...item.values, pinned_text: notes });
+    item = source.list()[0];
+    expect(item.pinned_text).toBe(notes);
+    expect(item.command).toBe("ycodex --bypass-safety-y resume real-session");
+    expect(source.list()).toHaveLength(1);
+    expect(fs.readFileSync(contextsPath, "utf8")).toContain("````pinned_text");
+    source.update({}, item.values, { ...item.values, name: "Renamed" });
+    item = source.list()[0];
+    expect(item.pinned_text).toBe(notes);
+    source.update({}, item.values, { ...item.values, pinned_text: "" });
+    expect(source.list()[0].pinned_text).toBe("");
+  });
+
+  it("returns work_dir, project_dir, the agents_dir alias and session_id from the JS description", () => {
+    const source = createCodexFolder({ contextsPath, defaultCwd: dir });
+    const entry = { cwd: dir, command: 'cd /d "D:\\My Project" && ycodex resume session', session_id: "session" };
+    const variables = source.getVariables({}, entry);
+    expect(variables).toEqual({ work_dir: dir, project_dir: path.resolve("D:\\My Project"), agents_dir: path.resolve("D:\\My Project"), session_id: "session" });
+    expect(source.getVariables({}, { cwd: dir, command: "ycodex" }).session_id).toBe("");
   });
 });

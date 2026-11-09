@@ -23,7 +23,7 @@ const folders = new FolderService(manager);
 const markdown = path.join(directory, "contexts.md");
 if (!fs.existsSync(markdown)) fs.writeFileSync(markdown, '# Agent demo\nColor: STD_GREEN\nDescription: "Demo context"\n\n```cmd\nycodex --bypass-safety-y resume demo-session\n```\n\n# Claude demo\nColor: STD_CYAN\n```cmd\nclaude --resume claude-session\n```\n');
 const scriptPath = path.join(directory, "agents.mjs");
-fs.writeFileSync(scriptPath, `import { createCodexFolder } from ${JSON.stringify(new URL("folders/codexes.mjs", compiled).href)};\nconst source = createCodexFolder(${JSON.stringify({ contextsPath: markdown, defaultCwd: directory })});\nexport const { list, defineFields, create, update } = source;\nconst remove = source.delete;\nexport { remove as delete };\n`);
+fs.writeFileSync(scriptPath, `import { createCodexFolder } from ${JSON.stringify(new URL("folders/codexes.mjs", compiled).href)};\nconst source = createCodexFolder(${JSON.stringify({ contextsPath: markdown, defaultCwd: directory })});\nexport const { list, defineFields, create, update, getVariables } = source;\nconst remove = source.delete;\nexport { remove as delete };\n`);
 await folders.configure({ name: "Agents demo", type: "scripted", scriptPath, intervalSeconds: 0, gatherErrors: false, confirmed: true });
 await folders.ensureManual("Default");
 await folders.initialize();

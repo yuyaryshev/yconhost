@@ -12,6 +12,7 @@ import type { BatchWinConfig, ConsoleRecord, ManagedProject, MywinsEntry } from 
 const editable: FolderCapabilities = { create: true, update: true, delete: true, readOutput: false };
 const noCapabilities: FolderCapabilities = { create: false, update: false, delete: false, readOutput: false };
 const manualFields: FolderField[] = [...defaultFolderFields,
+  { name: "pinned_text", label: "pinned_text", type: "string", multiline: true },
   { name: "command", label: "Command", type: "string" }, { name: "cwd", label: "Working directory", type: "string" },
   { name: "background", label: "Background", type: "color" }];
 const mywinsFields: FolderField[] = [...manualFields, { name: "no_run", label: "no_run (true/false)", type: "string" }, { name: "ansiParserEnabled", label: "ANSI parser (true/false)", type: "string" }];
@@ -137,7 +138,7 @@ export class FolderService {
         fields = this.validateFields(result.result ?? defaultFolderFields);
       } else fields = state.info.type === "manual" ? manualFields : mywinsFields;
       const values = record ? { ...record.sourceValues, name: record.name, description: record.description ?? "", cwd: record.cwd,
-        background: record.background ?? "", command: record.command, ...record.sourceValues } :
+        background: record.background ?? "", command: record.command, pinned_text: record.pinned_text ?? "", ...record.sourceValues } :
         Object.fromEntries(fields.map((field) => [field.name, field.defaultValue ?? ""]));
       return { folder: state.info, fields, values, revision: record ? this.revision(record) : undefined };
     });
@@ -150,7 +151,7 @@ export class FolderService {
       if (!state.info.capabilities.create) throw new Error("Folder does not support create");
       if (state.info.type === "scripted") await this.runner(state).call("create", this.context(state.info), values);
       else if (state.info.type === "my_wins") this.manager.addMywinsEntry(state.info.name, this.mywinsValues(values));
-      else this.manager.registerConsole({ project: state.info.name, name: values.name, description: values.description, command: values.command, cwd: values.cwd || undefined, background: values.background, persistent: true });
+      else this.manager.registerConsole({ project: state.info.name, name: values.name, description: values.description, pinned_text: values.pinned_text, command: values.command, cwd: values.cwd || undefined, background: values.background, persistent: true });
       return this.applyList(state);
     });
   }
@@ -299,7 +300,7 @@ export class FolderService {
 
   private context(info: FolderInfo) { return { folder: { id: info.id, name: info.name }, dataDir: this.manager.getSettings().dataDir }; }
   private original(record: ConsoleRecord) { return { ...record.sourceValues, key: record.sourceKey ?? record.name, name: record.name }; }
-  private revision(record: ConsoleRecord) { return crypto.createHash("sha256").update(JSON.stringify([record.sourceKey, record.sourceValues, record.name, record.description, record.command, record.cwd, record.background])).digest("hex"); }
+  private revision(record: ConsoleRecord) { return crypto.createHash("sha256").update(JSON.stringify([record.sourceKey, record.sourceValues, record.name, record.description, record.command, record.cwd, record.background, record.pinned_text])).digest("hex"); }
 
   private async applyList(state: State, remap?: { id: string; key: string }): Promise<ConsoleRecord[]> {
     try {
@@ -321,7 +322,15 @@ export class FolderService {
 
   private async readScript(info: FolderInfo, runner: FolderRunner) {
     const result = await runner.call<unknown>("list", this.context(info));
-    return { items: this.validateItems(result.result, result.capabilities), capabilities: result.capabilities };
+    const items = this.validateItems(result.result, result.capabilities);
+    for (const item of items) {
+      if (!item.pinned_text?.includes("{{")) continue;
+      const variables = await runner.call<unknown>("getVariables", this.context(info), { ...item.values, key: item.key, name: item.name, cwd: item.cwd, command: item.command });
+      const value = variables.result;
+      if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 64 || Object.entries(value).some(([key, field]) => !/^[a-zA-Z_][\w]*$/.test(key) || typeof field !== "string")) throw new Error("getVariables must return at most 64 named string values");
+      item.pinnedVariables = value as Record<string, string>;
+    }
+    return { items, capabilities: result.capabilities };
   }
 
   private readMywins(info: FolderInfo): FolderItem[] {
@@ -332,7 +341,8 @@ export class FolderService {
     return this.validateItems(Object.entries(document.wins ?? {}).map(([name, config]) => ({
       key: name, name, command: config.cmd ?? config.command ?? "", cwd: config.cwd ? path.resolve(directory, config.cwd) : directory,
       noRun: config.no_run === true, ansiParserEnabled: config.ansiParserEnabled, background: config.background ?? config.backgroung,
-      values: { name, command: config.cmd ?? config.command ?? "", cwd: config.cwd ?? "", background: config.background ?? config.backgroung ?? "", no_run: String(config.no_run === true), ansiParserEnabled: String(config.ansiParserEnabled !== false) }
+      pinned_text: config.pinned_text,
+      values: { name, pinned_text: config.pinned_text ?? "", command: config.cmd ?? config.command ?? "", cwd: config.cwd ?? "", background: config.background ?? config.backgroung ?? "", no_run: String(config.no_run === true), ansiParserEnabled: String(config.ansiParserEnabled !== false) }
     })), editable);
   }
 
@@ -345,7 +355,8 @@ export class FolderService {
       if (names.has(item.name)) throw new Error(`Duplicate folder entry name ${JSON.stringify(item.name)}. Give source entries different names; the previous console list was retained.`);
       if (keys.has(item.key)) throw new Error(`Duplicate folder entry key ${JSON.stringify(item.key)} in ${JSON.stringify(keys.get(item.key))} and ${JSON.stringify(item.name)}. Use unique session IDs/keys; the previous console list was retained.`);
       keys.set(item.key, item.name); names.add(item.name);
-      for (const field of ["command", "cwd", "shell", "description", "background"] as const) if (item[field] !== undefined && typeof item[field] !== "string") throw new Error(`Invalid entry ${field}`);
+      for (const field of ["command", "cwd", "shell", "description", "background", "pinned_text"] as const) if (item[field] !== undefined && typeof item[field] !== "string") throw new Error(`Invalid entry ${field}`);
+      if (item.pinned_text && item.pinned_text.length > 65536) throw new Error("pinned_text exceeds 64 KiB");
       if (item.args !== undefined && (!Array.isArray(item.args) || item.args.some((arg) => typeof arg !== "string"))) throw new Error("Invalid entry args");
       for (const field of ["readonly", "noRun", "ansiParserEnabled"] as const) if (item[field] !== undefined && typeof item[field] !== "boolean") throw new Error(`Invalid entry ${field}`);
       if (item.values !== undefined && (!item.values || typeof item.values !== "object" || Array.isArray(item.values) || Object.values(item.values).some((field) => typeof field !== "string"))) throw new Error("Entry values must be strings");
@@ -362,7 +373,7 @@ export class FolderService {
     if (!Array.isArray(value) || value.length > 64) throw new Error("defineFields must return at most 64 fields");
     const names = new Set<string>();
     for (const field of value) {
-      if (!field || typeof field.name !== "string" || !/^[a-zA-Z_][\w-]*$/.test(field.name) || ["__proto__", "constructor", "prototype"].includes(field.name) || names.has(field.name) || !["string", "color"].includes(field.type) || typeof field.label !== "string" || field.required !== undefined && typeof field.required !== "boolean" || field.defaultValue !== undefined && typeof field.defaultValue !== "string") throw new Error("Invalid defineFields schema");
+      if (!field || typeof field.name !== "string" || !/^[a-zA-Z_][\w-]*$/.test(field.name) || ["__proto__", "constructor", "prototype"].includes(field.name) || names.has(field.name) || !["string", "color"].includes(field.type) || typeof field.label !== "string" || field.required !== undefined && typeof field.required !== "boolean" || field.multiline !== undefined && typeof field.multiline !== "boolean" || field.defaultValue !== undefined && typeof field.defaultValue !== "string") throw new Error("Invalid defineFields schema");
       names.add(field.name);
     }
     return value;
@@ -370,6 +381,7 @@ export class FolderService {
 
   private async validateValues(state: State, values: Record<string, string>): Promise<void> {
     if (!values || typeof values !== "object" || Array.isArray(values) || Object.values(values).some((value) => typeof value !== "string")) throw new Error("Field values must be strings");
+    if (values.pinned_text && values.pinned_text.length > 65536) throw new Error("pinned_text exceeds 64 KiB");
     const fields = state.info.type === "scripted" ? await this.runner(state).call<FolderField[] | null>("defineFields", this.context(state.info)).then((result) => {
       state.info.capabilities = result.capabilities;
       return this.validateFields(result.result ?? defaultFolderFields);
@@ -382,7 +394,7 @@ export class FolderService {
 
   private mywinsValues(values: Record<string, string>): MywinsEntry {
     for (const field of ["no_run", "ansiParserEnabled"]) if (values[field] && !["true", "false"].includes(values[field])) throw new Error(`${field} must be true or false`);
-    return { name: values.name, command: values.command, cwd: values.cwd, background: values.background, no_run: values.no_run === "true", ansiParserEnabled: values.ansiParserEnabled !== "false" };
+    return { name: values.name, command: values.command, pinned_text: values.pinned_text, cwd: values.cwd, background: values.background, no_run: values.no_run === "true", ansiParserEnabled: values.ansiParserEnabled !== "false" };
   }
 
   private persist(state: State): void {

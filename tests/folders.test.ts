@@ -223,6 +223,53 @@ describe("Generic folders", () => {
     expect(manager.get(record.id).args).toEqual([]);
   });
 
+  it("persists manual pinned text without restarting the console, and supports clearing it", async () => {
+    const record = manager.create({ name: "Shell", shell: "cmd.exe", args: [], pinned_text: "Before" });
+    const form = await folders.entry("Default", record.id);
+    expect(form.fields.find((field) => field.name === "pinned_text")).toMatchObject({ type: "string", multiline: true });
+    await folders.updateEntry(record.id, { ...form.values, pinned_text: "Project: {{work_dir}}" }, form.revision);
+    expect(manager.get(record.id)).toMatchObject({ pinned_text: "Project: {{work_dir}}", pinnedVariables: { work_dir: record.cwd }, pid: record.pid, pendingRestart: false });
+    expect(new ConsoleStore(settings).load().find((item) => item.id === record.id)?.pinned_text).toBe("Project: {{work_dir}}");
+    manager.restart(record.id);
+    expect(manager.get(record.id).pinned_text).toBe("Project: {{work_dir}}");
+    const current = await folders.entry("Default", record.id);
+    await folders.updateEntry(record.id, { ...current.values, pinned_text: "" });
+    expect(manager.get(record.id).pinned_text).toBe("");
+    await request(app).post("/api/consoles").send({ pinned_text: 42 }).expect(400);
+    await request(app).post("/api/consoles").send({ pinned_text: "x".repeat(65537) }).expect(400);
+    expect(factory.sessions).toHaveLength(2);
+  });
+
+  it("uses generic script variables and retains the last good list on an invalid variable map", async () => {
+    const script = `export function list() { return [{ key: 'one', name: 'One', cwd: ${JSON.stringify(dir)}, pinned_text: '{{custom}}', values: { token: 'from-source' } }]; }
+      export function getVariables(context, entry) { return { custom: context.folder.name + ':' + entry.token }; }`;
+    const { scriptPath } = await source("generic-pins", script);
+    const record = manager.list("generic-pins")[0];
+    expect(record.pinnedVariables).toEqual({ custom: "generic-pins:from-source" });
+    fs.writeFileSync(scriptPath, script.replace("return { custom: context.folder.name + ':' + entry.token };", "return { custom: 42 };"));
+    await expect(folders.listFolder("generic-pins", true)).rejects.toThrow("getVariables");
+    expect(manager.list("generic-pins")[0]).toMatchObject({ id: record.id, pinnedVariables: { custom: "generic-pins:from-source" } });
+    fs.writeFileSync(scriptPath, script.slice(0, script.indexOf("export function getVariables")));
+    await folders.listFolder("generic-pins", true);
+    expect(manager.list("generic-pins")[0].pinnedVariables).toEqual({});
+    expect(factory.sessions).toHaveLength(0);
+  });
+
+  it("stores mywins pinned text in its source without altering launch settings or unrelated properties", async () => {
+    const projectPath = path.join(dir, "pinned-wins");
+    fs.mkdirSync(projectPath);
+    const file = path.join(projectPath, "mywins.json");
+    fs.writeFileSync(file, JSON.stringify({ unrelated: 42, wins: { Build: { cmd: "echo build", no_run: true, custom: "keep", pinned_text: "Original" } } }));
+    await folders.configure({ name: "Builds", type: "my_wins", projectPath, intervalSeconds: 0 });
+    const record = manager.list("Builds")[0];
+    manager.start(record.id);
+    const form = await folders.entry("Builds", record.id);
+    await folders.updateEntry(record.id, { ...form.values, pinned_text: "Build: {{work_dir}}\nhttps://example.com" }, form.revision);
+    expect(manager.get(record.id)).toMatchObject({ pinned_text: "Build: {{work_dir}}\nhttps://example.com", pinnedVariables: { work_dir: projectPath }, command: "echo build", noRun: true, pendingRestart: false });
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({ unrelated: 42, wins: { Build: { cmd: "echo build", no_run: true, custom: "keep", pinned_text: "Build: {{work_dir}}\nhttps://example.com" } } });
+    expect(factory.sessions).toHaveLength(1);
+  });
+
   it("preserves mywins identity/history on rename and supports adding to an empty configured folder", async () => {
     const projectPath = path.join(dir, "wins");
     fs.mkdirSync(projectPath);
@@ -371,12 +418,42 @@ describe("Generic folders", () => {
     expect(folders.store.listManagedProjects().some((folder) => folder.name === "agents")).toBe(false);
   });
 
+  it("upgrades only the generated wrapper even after the migration marker, without recreating folders", async () => {
+    await migrateBuiltinFolders(folders, settings);
+    const wrapper = path.join(dir, "folder-scripts", "codexes.mjs");
+    const generated = fs.readFileSync(wrapper, "utf8");
+    fs.writeFileSync(wrapper, generated.replace("create, update, getVariables", "create, update"));
+    await migrateBuiltinFolders(folders, settings);
+    expect(fs.readFileSync(wrapper, "utf8")).toBe(generated);
+    fs.writeFileSync(wrapper, "// custom wrapper\nexport function list() { return []; }\n");
+    await migrateBuiltinFolders(folders, settings);
+    expect(fs.readFileSync(wrapper, "utf8")).toContain("// custom wrapper");
+  });
+
   describe("Codex source", () => {
     async function agents() {
       fs.writeFileSync(settings.codexContexts.contextsPath, "preamble\n# Agent\nColor: #102030\nUnrelated: preserve\n\n```cmd\ncd /d \"D:\\work\"\nycodex resume old-guid\n```\n\n# Notes\nnot an agent\n");
       await configureCodexFixture(folders, settings);
       return manager.list("agents")[0];
     }
+
+    it("exposes script variables and saves pinned notes through HTTP without disturbing a running session", async () => {
+      const record = await agents();
+      manager.start(record.id);
+      const pid = manager.get(record.id).pid;
+      const form = await request(app).get(`/api/consoles/${record.id}/entry`).expect(200);
+      expect(form.body.fields.find((field: { name: string }) => field.name === "pinned_text").multiline).toBe(true);
+      const notes = 'Project: "{{project_dir}}"\n{{session_id}}\n# note, not a console\n```cmd\nycodex resume fake\n```';
+      await request(app).put(`/api/consoles/${record.id}/entry`).send({ values: { ...form.body.values, pinned_text: notes }, revision: form.body.revision }).expect(200);
+      const updated = manager.get(record.id);
+      expect(updated).toMatchObject({ id: record.id, pid, pinned_text: notes, noRun: true, pendingRestart: false,
+        pinnedVariables: { work_dir: path.resolve("D:\\work"), project_dir: path.resolve("D:\\work"), agents_dir: path.resolve("D:\\work"), session_id: "old-guid" } });
+      expect(updated.command).toBe(record.command);
+      expect(manager.list("agents")).toHaveLength(1);
+      expect(fs.readFileSync(settings.codexContexts.contextsPath, "utf8")).toContain("````pinned_text");
+      await expect(folders.updateEntry(record.id, form.body.values, form.body.revision)).rejects.toThrow("externally");
+      expect(factory.sessions).toHaveLength(1);
+    });
 
     it("edits name and session_id separately, rejects simultaneous changes, and preserves unrelated Markdown", async () => {
       const record = await agents();

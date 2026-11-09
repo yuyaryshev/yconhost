@@ -21,6 +21,8 @@ export class ConsoleStore {
       sourceKey: record.sourceKey,
       sourceValues: record.sourceValues,
       description: record.description,
+      pinned_text: record.pinned_text,
+      pinnedVariables: record.pinnedVariables,
       orphaned: record.orphaned,
       id: record.id,
       lastStartedAt: record.lastStartedAt,

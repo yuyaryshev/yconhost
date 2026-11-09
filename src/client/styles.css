@@ -55,7 +55,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -375,6 +376,56 @@ h2 {
 .terminal-layout {
   min-width: 0;
   min-height: 0;
+}
+
+.pinned-text {
+  padding: 8px 16px 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text);
+  font: 13px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  min-width: 0;
+  user-select: text;
+}
+
+.pinned-text-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pinned-path,
+.pinned-text a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+.pinned-path {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  white-space: inherit;
+  cursor: pointer;
+}
+
+.pinned-path:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.pinned-text-status {
+  min-height: 17px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pinned-text-status.failed {
+  color: var(--danger);
 }
 
 .terminal-layout {
@@ -943,7 +994,8 @@ h2 {
 }
 
 .dialog input,
-.dialog select {
+.dialog select,
+.dialog textarea {
   width: 100%;
   min-height: 36px;
   border: 1px solid var(--border-strong);
@@ -953,11 +1005,18 @@ h2 {
 
 .dialog input,
 .dialog select,
+.dialog textarea,
 .project-console-search,
 .project-show-all {
   color: var(--text);
   background: var(--surface-bg);
   border-color: var(--border-strong);
+}
+
+.dialog textarea {
+  resize: vertical;
+  min-height: 90px;
+  max-height: 320px;
 }
 
 .project-console-search,

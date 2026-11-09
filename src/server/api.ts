@@ -12,6 +12,7 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
   app.locals.folders = folders;
   app.use(express.json({ limit: "1mb" }));
   const manualConsole = async (body: any, register = false) => {
+    if (body.pinned_text !== undefined && (typeof body.pinned_text !== "string" || body.pinned_text.length > 65536)) throw new Error("pinned_text must be a string of at most 64 KiB");
     await folders.ensureManual(body.project ?? "Default");
     return register ? manager.registerConsole(body) : manager.create(body);
   };
@@ -79,7 +80,7 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
     return operation();
   };
   const configProperties = { name: string, type: { type: "string", enum: ["manual", "my_wins", "scripted"] }, scriptPath: string, projectPath: string, intervalSeconds: { type: "number", minimum: 0, maximum: 86400 }, gatherErrors: boolean, closeRemoves: boolean, confirmed: boolean };
-  const consoleProperties = { name: string, project: { ...string, default: "AGENTS_TEMP", description: "Preferred for one-off agent requests." }, cwd: string, command: string, shell: string, args: { type: "array", items: string }, noRun: boolean, persistent: boolean, ansiParserEnabled: boolean };
+  const consoleProperties = { name: string, project: { ...string, default: "AGENTS_TEMP", description: "Preferred for one-off agent requests." }, cwd: string, command: string, pinned_text: { ...string, maxLength: 65536, description: "Pinned plain text above the terminal; {{work_dir}} expands to cwd. Windows paths copy on click." }, shell: string, args: { type: "array", items: string }, noRun: boolean, persistent: boolean, ansiParserEnabled: boolean };
   const descriptors: Array<{ name: string; description: string; properties: object; required?: string[]; run: (args: any) => unknown }> = [
     { name: "list_consoles", description: "List cached console slots without starting or rereading sources.", properties: { project: string }, run: (a) => manager.list(a.project) },
     { name: "list_projects", description: "List folders, including empty folders, types, capabilities and source errors.", properties: {}, run: () => manager.listProjects() },

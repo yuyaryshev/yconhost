@@ -2,10 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
+export const defaultPinnedText = 'Work dir: "{{work_dir}}"\nProject dir: "{{project_dir}}"\nSession ID: {{session_id}}';
+
 export function createCodexFolder(config) {
   const fields = [
     { name: "name", label: "Name", type: "string", required: true },
     { name: "description", label: "Description", type: "string" },
+    { name: "pinned_text", label: "pinned_text", type: "string", multiline: true, defaultValue: defaultPinnedText },
     { name: "session_id", label: "Session ID", type: "string" },
     { name: "cwd", label: "Working directory", type: "string" },
     { name: "background", label: "Background", type: "color" }
@@ -54,6 +57,11 @@ export function createCodexFolder(config) {
   }
   return {
     defineFields: () => fields,
+    getVariables: (_context, entry) => {
+      const workDir = path.resolve(entry.cwd || config.defaultCwd || process.cwd());
+      const projectDir = extractCwd(entry.command ?? "", workDir);
+      return { work_dir: workDir, project_dir: projectDir, agents_dir: projectDir, session_id: entry.session_id ?? sessionMatch(entry.command ?? "")?.[1] ?? "" };
+    },
     list: () => {
       const text = read();
       const items = all(text);
@@ -96,6 +104,7 @@ export function createCodexFolder(config) {
       raw = metadata(raw, "Color", values.background || "");
       raw = metadata(raw, "Description", JSON.stringify(values.description ?? ""));
       raw = editLaunch(raw, values, item, idChanged);
+      raw = setPinnedText(raw, values.pinned_text ?? item.pinned_text ?? defaultPinnedText);
       const after = item.raw !== undefined ? before.slice(0, item.start) + raw + before.slice(item.end) : `${before}\n${raw}`;
       save(before, after);
       return { key: values.session_id || values.name.trim() };
@@ -112,22 +121,19 @@ export function createCodexFolder(config) {
 function toItem(item) {
   return {
     key: item.session_id || item.name, name: item.name, description: item.description ?? "",
+    pinned_text: item.pinned_text ?? defaultPinnedText,
     command: item.command, cwd: item.cwd, shell: process.platform === "win32" ? "cmd.exe" : undefined,
     noRun: true, background: item.background, ansiParserEnabled: true,
-    values: { name: item.name, description: item.description ?? "", session_id: item.session_id, cwd: item.cwd, background: item.background ?? "", _revision: item._revision }
+    values: { name: item.name, description: item.description ?? "", pinned_text: item.pinned_text ?? defaultPinnedText, session_id: item.session_id, cwd: item.cwd, background: item.background ?? "", _revision: item._revision }
   };
 }
 
 export function parseSections(text, defaultCwd = process.cwd()) {
   const headings = [];
   let offset = 0;
-  let fence;
+  const blocks = fencedBlocks(text);
   for (const line of text.split(/(?<=\n)/)) {
-    const mark = line.match(/^\s*(`{3,}|~{3,})/);
-    if (mark) {
-      if (!fence) fence = mark[1][0];
-      else if (fence === mark[1][0]) fence = undefined;
-    } else if (!fence && /^#\s+/.test(line)) headings.push(offset);
+    if (!blocks.some((block) => offset >= block.start && offset < block.end) && /^#\s+/.test(line)) headings.push(offset);
     offset += line.length;
   }
   return headings.map((start, index) => {
@@ -136,34 +142,39 @@ export function parseSections(text, defaultCwd = process.cwd()) {
     const heading = raw.match(/^#\s+([^\r\n]+)/)?.[1]?.trim() ?? "";
     const deleted = /^DELETED(?:\s|$)/i.test(heading);
     const name = heading.replace(/^DELETED\s*/i, "");
-    let inCode = false;
     let background = "";
     let description = "";
-    const code = [];
-    for (const line of raw.split(/\r?\n/).slice(1)) {
-      if (/^\s*(?:`{3,}|~{3,})/.test(line)) { inCode = !inCode; continue; }
-      if (inCode) code.push(line);
-      else {
+    const sectionBlocks = fencedBlocks(raw);
+    const pinned = sectionBlocks.filter((block) => block.tag === "pinned_text");
+    if (pinned.length > 1 || pinned.some((block) => !block.closed)) throw new Error(`Invalid pinned_text block in ${JSON.stringify(name)}`);
+    const code = sectionBlocks.filter((block) => block.tag !== "pinned_text").flatMap((block) => raw.slice(block.bodyStart, block.bodyEnd).split(/\r?\n/));
+    let lineOffset = 0;
+    for (const line of raw.split(/(?<=\n)/)) {
+      if (!sectionBlocks.some((block) => lineOffset >= block.start && lineOffset < block.end)) {
         const color = line.match(/^Color:\s*`?([^`\r\n]+)`?\s*$/)?.[1];
         if (color) background = color.trim();
         const desc = line.match(/^Description:\s*(.*)$/)?.[1];
         if (desc !== undefined) { try { description = JSON.parse(desc); } catch { description = desc; } }
       }
+      lineOffset += line.length;
     }
     const launchIndex = code.findIndex((line) => findAgentCommand(line));
     const prefixes = code.slice(0, launchIndex).map((line) => line.trim()).filter((line) => /^(?:cls|set |cd |title )/i.test(line) && !/^set\s+"?y?codex_home=/i.test(line));
     const launch = launchIndex < 0 ? "" : normalizeAgentCommand(code[launchIndex].trim());
     const command = launch ? [...prefixes, launch].join(" & ") : "";
-    return { start, end, raw, name, deleted, background, description, command, session_id: sessionMatch(command)?.[1] ?? "", cwd: extractCwd(command, defaultCwd), _revision: hash(raw) };
+    const pinnedText = pinned.length ? raw.slice(pinned[0].bodyStart, pinned[0].bodyEnd).replace(/\r?\n$/, "").replace(/\r\n/g, "\n") : defaultPinnedText;
+    return { start, end, raw, name, deleted, background, description, pinned_text: pinnedText, hasPinnedText: pinned.length > 0, command, session_id: sessionMatch(command)?.[1] ?? "", cwd: extractCwd(command, defaultCwd), _revision: hash(raw) };
   });
 }
 
 function metadata(raw, name, value) {
   const newline = raw.includes("\r\n") ? "\r\n" : "\n";
-  let inCode = false;
+  const blocks = fencedBlocks(raw);
+  let offset = 0;
   let found = false;
   const next = raw.split(/(?<=\n)/).map((line) => {
-    if (/^\s*(?:`{3,}|~{3,})/.test(line)) inCode = !inCode;
+    const inCode = blocks.some((block) => offset >= block.start && offset < block.end);
+    offset += line.length;
     if (!inCode && line.startsWith(`${name}:`)) { found = true; return `${name}: ${value}${newline}`; }
     return line;
   }).join("");
@@ -172,12 +183,14 @@ function metadata(raw, name, value) {
 
 function editLaunch(raw, values, original, idChanged) {
   const lines = raw.split(/(?<=\n)/);
-  let inCode = false;
+  const blocks = fencedBlocks(raw);
+  let offset = 0;
   let lastDirectory = -1;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    if (/^\s*(?:`{3,}|~{3,})/.test(line)) { inCode = !inCode; continue; }
-    if (!inCode) continue;
+    const block = blocks.find((item) => offset >= item.bodyStart && offset < item.bodyEnd);
+    offset += line.length;
+    if (!block || block.tag === "pinned_text") continue;
     if (!findAgentCommand(line)) {
       if (/^\s*cd\s+\/d\s+/i.test(line)) lastDirectory = index;
       continue;
@@ -201,7 +214,43 @@ function editLaunch(raw, values, original, idChanged) {
 }
 
 function render(values, command) {
-  return `# ${values.name.trim()}\nColor: ${values.background ?? ""}\nDescription: ${JSON.stringify(values.description ?? "")}\n\n\`\`\`cmd\n${values.cwd ? `cd /d "${values.cwd}"\n` : ""}${command}\n\`\`\`\n`;
+  return setPinnedText(`# ${values.name.trim()}\nColor: ${values.background ?? ""}\nDescription: ${JSON.stringify(values.description ?? "")}\n\n\`\`\`cmd\n${values.cwd ? `cd /d "${values.cwd}"\n` : ""}${command}\n\`\`\`\n`, values.pinned_text ?? defaultPinnedText);
+}
+
+function fencedBlocks(text) {
+  const result = [];
+  let open;
+  let offset = 0;
+  for (const line of text.split(/(?<=\n)/)) {
+    if (!open) {
+      const match = line.match(/^ {0,3}(`{3,}|~{3,})([^\r\n]*)/);
+      if (match) open = { start: offset, bodyStart: offset + line.length, marker: match[1], tag: match[2].trim().toLowerCase() };
+    } else if (new RegExp(`^ {0,3}${open.marker[0]}{${open.marker.length},}\\s*$`).test(line)) {
+      result.push({ ...open, bodyEnd: offset, end: offset + line.length, closed: true });
+      open = undefined;
+    }
+    offset += line.length;
+  }
+  if (open) result.push({ ...open, bodyEnd: text.length, end: text.length, closed: false });
+  return result;
+}
+
+function setPinnedText(raw, text) {
+  const newline = raw.includes("\r\n") ? "\r\n" : "\n";
+  const length = Math.max(3, ...[...text.matchAll(/`+/g)].map((match) => match[0].length + 1));
+  const fence = "`".repeat(length);
+  const rendered = `${fence}pinned_text${newline}${text.replace(/\r?\n/g, newline)}${newline}${fence}${newline}`;
+  const block = fencedBlocks(raw).find((item) => item.tag === "pinned_text");
+  return block ? raw.slice(0, block.start) + rendered + raw.slice(block.end) : `${raw}${raw.endsWith("\n") ? newline : newline + newline}${rendered}`;
+}
+
+export function addDefaultPinnedTextBlocks(text, defaultCwd) {
+  let next = text;
+  for (const item of parseSections(text, defaultCwd).reverse()) {
+    if (!item.command || item.deleted || item.hasPinnedText) continue;
+    next = next.slice(0, item.start) + setPinnedText(item.raw, defaultPinnedText) + next.slice(item.end);
+  }
+  return next;
 }
 
 function readLua(file, defaultCwd) {

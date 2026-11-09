@@ -219,7 +219,7 @@ export class ConsoleManager {
       record.pendingRestart = Boolean(item.session && item.activeLaunch !== JSON.stringify([command, cwd, shell, args]));
       Object.assign(record, {
         folderId: folder.id, sourceKey: definition.key, sourceValues: definition.values ?? {},
-        description: definition.description, name: definition.name, cwd, command, shell, args,
+        description: definition.description, pinned_text: definition.pinned_text, pinnedVariables: definition.pinnedVariables ?? { work_dir: cwd }, name: definition.name, cwd, command, shell, args,
         projectPath: folder.projectPath, background: definition.background,
         backgroundColor: resolveConsoleBackground(definition.background), noRun: definition.noRun,
         ansiParserEnabled: definition.ansiParserEnabled !== false, persistent: true,
@@ -258,7 +258,7 @@ export class ConsoleManager {
     const cwd = path.resolve(values.cwd || item.record.cwd);
     const args = command === item.record.command ? item.record.args : command ? commandArgs(item.record.shell, command) : [];
     item.record.pendingRestart = Boolean(item.session && item.activeLaunch !== JSON.stringify([command, cwd, item.record.shell, args]));
-    Object.assign(item.record, { name: values.name.trim(), description: values.description ?? "", command, cwd,
+    Object.assign(item.record, { name: values.name.trim(), description: values.description ?? "", pinned_text: values.pinned_text ?? "", pinnedVariables: { work_dir: cwd }, command, cwd,
       args, background: values.background || undefined,
       backgroundColor: resolveConsoleBackground(values.background), updatedAt: new Date().toISOString() });
     this.persist();
@@ -277,6 +277,8 @@ export class ConsoleManager {
       sourceKey: request.sourceKey,
       sourceValues: request.sourceValues,
       description: request.description,
+      pinned_text: request.pinned_text,
+      pinnedVariables: request.pinnedVariables ?? { work_dir: cwd },
       orphaned: request.orphaned,
       capabilities: this.folders.get((request.project ?? "Default").toLowerCase())?.capabilities,
       name: request.name ?? request.command ?? shell,
@@ -419,6 +421,8 @@ export class ConsoleManager {
         background: config.background ?? config.backgroung,
         backgroundColor: resolveConsoleBackground(config.background ?? config.backgroung),
         ansiParserEnabled: config.ansiParserEnabled,
+        pinned_text: config.pinned_text,
+        pinnedVariables: { work_dir: config.cwd ? path.resolve(resolvedProjectPath, config.cwd) : resolvedProjectPath },
         readCardHashes: existing?.record.readCardHashes
       };
 
@@ -432,6 +436,8 @@ export class ConsoleManager {
         existing.record.shell = this.settings.defaultShell;
         existing.record.args = request.command ? commandArgs(existing.record.shell, request.command) : [];
         existing.record.ansiParserEnabled = request.ansiParserEnabled ?? true;
+        existing.record.pinned_text = request.pinned_text;
+        existing.record.pinnedVariables = request.pinnedVariables;
         existing.record.updatedAt = new Date().toISOString();
         orderedIds.push(existing.record.id);
         return existing.record;
@@ -482,7 +488,7 @@ export class ConsoleManager {
     const wins = parsed.wins ?? {};
     if (!wins[currentName]) throw new Error(`Console ${currentName} is not present in ${path.basename(configPath)}`);
     if (nextName !== currentName && wins[nextName]) throw new Error(`Console ${nextName} already exists in ${path.basename(configPath)}`);
-    parsed.wins = replaceMywinsEntry(wins, currentName, nextName, entryToConfig(entry));
+    parsed.wins = replaceMywinsEntry(wins, currentName, nextName, { ...wins[currentName], ...entryToConfig(entry), command: undefined, backgroung: undefined });
     writeMywinsFile(configPath, parsed);
     item.record.name = nextName;
     return this.createBatch(item.record.projectPath!, undefined, { removeMissing: true, startNew: false, projectName: item.record.project });
@@ -858,6 +864,8 @@ export class ConsoleManager {
       sourceKey: record.sourceKey,
       sourceValues: record.sourceValues,
       description: record.description,
+      pinned_text: record.pinned_text,
+      pinnedVariables: record.pinnedVariables,
       orphaned: record.orphaned,
       lastStartedAt: record.lastStartedAt,
       createdAt: record.createdAt,
@@ -977,6 +985,7 @@ function normalizeMywinsName(name: string): string {
 
 function configToMywinsEntry(name: string, config: BatchWinConfig): MywinsEntry {
   return {
+    pinned_text: config.pinned_text,
     name,
     cmd: config.cmd,
     command: config.command,
@@ -989,6 +998,7 @@ function configToMywinsEntry(name: string, config: BatchWinConfig): MywinsEntry 
 
 function entryToConfig(entry: MywinsEntry): BatchWinConfig {
   return {
+    pinned_text: entry.pinned_text,
     cmd: entry.cmd ?? entry.command ?? "",
     cwd: entry.cwd || undefined,
     no_run: entry.no_run === true ? true : undefined,

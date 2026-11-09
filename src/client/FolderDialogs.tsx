@@ -73,6 +73,7 @@ export function FolderEntryDialog({ dialog, project, id, theme, onSaved }: { dia
       <fieldset disabled={loading || saving} className="settings-grid fields-grid">
         {fields.map((field) => field.type === "color" ? <ColorField key={field.name} name={field.name} label={field.label} theme={theme} value={values[field.name] ?? ""} onChange={(value) => { setError(""); setValues((current) => ({ ...current, [field.name]: value })); }} /> :
           folderType === "my_wins" && ["no_run", "ansiParserEnabled"].includes(field.name) ? <label key={field.name} className="checkbox-label"><input type="checkbox" checked={values[field.name] === "true"} onChange={(event) => setValues((current) => ({ ...current, [field.name]: String(event.target.checked) }))} />{field.name === "no_run" ? "no_run" : "ANSI parser"}</label> :
+          field.multiline ? <label key={field.name}>{field.label}<textarea name={field.name} rows={4} maxLength={field.name === "pinned_text" ? 65536 : undefined} required={field.required} value={values[field.name] ?? ""} onChange={(event) => { setError(""); setValues((current) => ({ ...current, [field.name]: event.target.value })); }} /></label> :
           <label key={field.name}>{field.label}<input name={field.name} required={field.required} value={values[field.name] ?? ""} onChange={(event) => { setError(""); setValues((current) => ({ ...current, [field.name]: event.target.value })); }} /></label>)}
       </fieldset>
       {error ? <p className="form-error" role="alert">{error}</p> : null}

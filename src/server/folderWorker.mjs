@@ -13,6 +13,10 @@ parentPort.on("message", async ({ id, method, args }) => {
         parentPort.postMessage({ id, result: null, capabilities });
         return;
       }
+      if (method === "getVariables") {
+        parentPort.postMessage({ id, result: {}, capabilities });
+        return;
+      }
       throw new Error(`Folder script does not support ${method}`);
     }
     const result = await handler(...args);

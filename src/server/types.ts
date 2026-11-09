@@ -206,6 +206,7 @@ export interface AppSettings {
 }
 
 export interface BatchWinConfig {
+  pinned_text?: string;
   cmd?: string;
   command?: string;
   cwd?: string;
@@ -216,6 +217,7 @@ export interface BatchWinConfig {
 }
 
 export interface MywinsEntry {
+  pinned_text?: string;
   name: string;
   cmd?: string;
   command?: string;

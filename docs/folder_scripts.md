@@ -57,8 +57,13 @@ export function defineFields(context) {
   return [
     { name: "name", label: "Name", type: "string", required: true },
     { name: "description", label: "Description", type: "string" },
+    { name: "pinned_text", label: "pinned_text", type: "string", multiline: true },
     { name: "background", label: "Background", type: "color" }
   ];
+}
+
+export function getVariables(context, entry) {
+  return { work_dir: entry.cwd, folder_name: context.folder.name };
 }
 
 export async function create(context, values) { /* write source */ }
@@ -69,6 +74,12 @@ export async function update(context, original, values) {
 async function remove(context, original) { /* disable/delete source entry */ }
 export { remove as delete };
 ```
+
+`pinned_text` возвращается также на верхнем уровне элемента `list` и в его
+`values` для редактирования. `getVariables` необязателен и возвращает словарь
+строк для подстановок `{{name}}`; `multiline: true` у строкового поля включает
+textarea в диалоге. Формат хранения, ограничения и пример Codex описаны
+в [pinned_text.md](pinned_text.md).
 
 `context` содержит `folder: { id, name }` и `dataDir`. `original` содержит исходные
 `key`, `name` и `values` записи. `values` — словарь строк. Без `defineFields` форма
