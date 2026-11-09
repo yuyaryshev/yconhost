@@ -3,6 +3,11 @@ export const standardColors: Record<string, readonly [number, number, number]> =
   STD_YELLOW: [1, 1, 0], STD_CYAN: [0, 1, 1], STD_MAGENTA: [1, 0, 1], STD_WHITE: [1, 1, 1]
 };
 
+export const terminalColorPresets = {
+  CLI_BLACK: "#000000", CLI_RED: "#320000", CLI_GREEN: "#003200", CLI_BLUE: "#000032",
+  CLI_YELLOW: "#323200", CLI_CYAN: "#003232", CLI_MAGENTA: "#320032", CLI_WHITE: "#323232"
+} as const;
+
 export function colorRgb(value: string, theme: "dark" | "light" = "dark"): [number, number, number] | undefined {
   const raw = value.trim();
   const key = raw.toUpperCase().replace(/^STD_GR(?:AY|EY)$/, "STD_WHITE");

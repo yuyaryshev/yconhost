@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Button, Dialog, DialogDismiss, DialogHeading, useDialogStore } from "@ariakit/react";
 import { HexColorInput, HexColorPicker } from "react-colorful";
-import { colorHex, resolveConsoleBackground, standardColors } from "../shared/colors.js";
+import { colorHex, resolveConsoleBackground, standardColors, terminalColorPresets } from "../shared/colors.js";
 import type { FolderConfig, FolderField, FolderInfo } from "../server/folderTypes.js";
 
 type DialogStore = ReturnType<typeof useDialogStore>;
@@ -18,6 +18,10 @@ export function ColorField({ name, label, value, theme, onChange }: { name: stri
   const dialog = useDialogStore();
   const [draft, setDraft] = useState(value);
   const background = resolveConsoleBackground(value)?.[theme];
+  const palettes = [
+    { label: "CLI colors", colors: Object.entries(terminalColorPresets).map(([name, color]) => ({ label: `${name} (${color})`, value: color })) },
+    { label: "Standard colors", colors: Object.keys(standardColors).map((color) => ({ label: color, value: color })) }
+  ];
   return <div className="color-field">
     <span id={`${name}-label`}>{label}</span>
     <div className="color-field-value">
@@ -26,9 +30,16 @@ export function ColorField({ name, label, value, theme, onChange }: { name: stri
     </div>
     <Dialog store={dialog} className="dialog color-dialog" backdrop={<div className="backdrop color-backdrop" />}>
       <DialogHeading className="dialog-title">{label}</DialogHeading>
-      <div className="standard-colors" role="group" aria-label="Standard colors">
-        {Object.keys(standardColors).map((preset) => <button key={preset} type="button" className="color-swatch" title={preset} aria-label={preset} aria-pressed={draft.toUpperCase().replace(/^STD_GR(?:AY|EY)$/, "STD_WHITE") === preset} style={{ background: resolveConsoleBackground(preset)?.[theme] }} onClick={() => setDraft(preset)} />)}
-      </div>
+      {background ? <div className="current-color">
+        <span>Current color</span>
+        <div className="color-field-value"><button type="button" className="color-swatch" style={{ background }} title={value} aria-label="Current color" onClick={() => setDraft(value)} /><code>{value}</code></div>
+      </div> : null}
+      {palettes.map((palette) => <div key={palette.label} className="color-palette">
+        <span>{palette.label}</span>
+        <div className="standard-colors" role="group" aria-label={palette.label}>
+          {palette.colors.map((preset) => <button key={preset.value} type="button" className="color-swatch" title={preset.label} aria-label={preset.label} aria-pressed={colorHex(draft, theme) === colorHex(preset.value, theme)} style={{ background: resolveConsoleBackground(preset.value)?.[theme] }} onClick={() => setDraft(preset.value)} />)}
+        </div>
+      </div>)}
       <output className="selected-color">{draft || "Default"}</output>
       <HexColorPicker color={colorHex(draft, theme)} onChange={setDraft} aria-label="Custom color" />
       <label>HEX<HexColorInput color={colorHex(draft, theme)} onChange={setDraft} prefixed aria-label="HEX color" /></label>

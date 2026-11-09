@@ -959,6 +959,18 @@ h2 {
   padding: 4px;
 }
 
+.current-color,
+.color-palette {
+  display: grid;
+  gap: 6px;
+}
+
+.current-color > span,
+.color-palette > span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 .color-dialog {
   z-index: 1002;
   width: min(368px, calc(100vw - 24px));

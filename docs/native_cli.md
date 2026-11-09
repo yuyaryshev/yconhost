@@ -42,6 +42,11 @@ Standard and yopenconsole sessions can coexist. Shell/process-tree termination,
 native handle release and output-worker disposal follow the existing cleanup rules.
 Loss of the server IPC connection also tears down the worker's console.
 
+The proposed separation of the HTTP server and terminal ownership is documented
+in [server_restart_without_console_loss.md](server_restart_without_console_loss.md).
+It is not implemented yet; do not restart the live service without coordinating
+the current console sessions.
+
 The host receives a unique `YOPENCONSOLE_PIPE_ID` in its environment. Its control
 pipe is serialized and used for `close-mode hide`, `show`, `hide`, `visible`, and
 `size`. Visibility is refreshed every 250 ms, including changes from the native
