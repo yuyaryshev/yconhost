@@ -5,10 +5,13 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import pty from "node-pty";
 import treeKill from "tree-kill";
-import type { NativeWindowState } from "./types.js";
+import type { ConsoleCreateRequest, NativeWindowState } from "./types.js";
+import type { RuntimeRun, TerminalScreen, OutputPosition } from "./runtimeProtocol.js";
 import { spawnNativeTerminal } from "./nativeTerminal.js";
 
 export interface TerminalOptions {
+  consoleId?: string;
+  definition?: ConsoleCreateRequest;
   cwd: string;
   env: NodeJS.ProcessEnv;
   cols: number;
@@ -20,7 +23,7 @@ export interface TerminalOptions {
 
 export interface TerminalSession {
   readonly pid?: number;
-  write(data: string): void;
+  write(data: string): void | Promise<void>;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
   onData(listener: (chunk: string) => void): void;
@@ -28,10 +31,21 @@ export interface TerminalSession {
   onReady?(listener: (pid: number) => void): void;
   onNativeWindow?(listener: (state: NativeWindowState) => void): void;
   nativeWindow?(visible?: boolean): Promise<NativeWindowState>;
+  readonly position?: OutputPosition;
+  snapshot?(): Promise<TerminalScreen>;
+  onState?(listener: (state: RuntimeRun) => void): void;
 }
 
 export interface TerminalFactory {
   spawn(shell: string, args: string[], options: TerminalOptions): TerminalSession;
+  readonly ownsLogs?: boolean;
+  readonly connected?: boolean;
+  initialize?(): Promise<void>;
+  listRuns?(): Promise<RuntimeRun[]>;
+  attach?(run: RuntimeRun): TerminalSession;
+  onConnection?(listener: (connected: boolean) => void): void;
+  touch?(id: string): void;
+  disconnect?(): void;
 }
 
 export class PtyTerminalFactory implements TerminalFactory {

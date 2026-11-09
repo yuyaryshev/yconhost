@@ -8,10 +8,13 @@ import { loadSettings } from "./settings.js";
 import { PtyTerminalFactory } from "./terminal.js";
 import { FolderService } from "./folderService.js";
 import { migrateBuiltinFolders } from "./folderMigration.js";
+import { RuntimeClient } from "./runtimeClient.js";
 
 async function main(): Promise<void> {
   const settings = loadSettings();
-  const manager = new ConsoleManager(settings, new LogStore(settings), new PtyTerminalFactory(), new ConsoleStore(settings), new ProjectStore(settings));
+  const factory = process.env.YCONHOST_TERMINAL_MODE === "direct" ? new PtyTerminalFactory() : new RuntimeClient(settings.dataDir);
+  const manager = new ConsoleManager(settings, new LogStore(settings), factory, new ConsoleStore(settings), new ProjectStore(settings));
+  await manager.initializeRuntime();
   const folders = new FolderService(manager);
   await migrateBuiltinFolders(folders, settings);
   folders.adoptRegistry();

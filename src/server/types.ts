@@ -66,6 +66,8 @@ export interface ConsoleDefinition extends SourceMetadata {
 }
 
 export interface ConsoleRecord extends SourceMetadata {
+  runId?: string;
+  runtimeConnected?: boolean;
   lastStartedAt?: string;
   id: string;
   name: string;

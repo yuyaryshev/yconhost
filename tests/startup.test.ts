@@ -19,7 +19,7 @@ afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
 function launch(port: number) {
   fs.writeFileSync(settingsPath, JSON.stringify({ dataDir: directory, host: "127.0.0.1", port }));
   return execute(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
-    cwd: process.cwd(), env: { ...process.env, YCONHOST_SETTINGS_PATH: settingsPath }, windowsHide: true, timeout: 8000
+    cwd: process.cwd(), env: { ...process.env, YCONHOST_SETTINGS_PATH: settingsPath, YCONHOST_TERMINAL_MODE: "direct" }, windowsHide: true, timeout: 8000
   });
 }
 

@@ -11,16 +11,17 @@ import type { LogStore } from "./logStore.js";
 import type { ConsoleStore } from "./consoleStore.js";
 import type { ProjectStore } from "./projectStore.js";
 import type { TerminalFactory, TerminalSession } from "./terminal.js";
+import type { RuntimeRun, TerminalScreen, OutputPosition } from "./runtimeProtocol.js";
 import type { AppSettings, BatchWinConfig, ConsoleCreateRequest, ConsoleRecord, ConsoleRegisterRequest, ConsoleSessionState, ConsoleSnapshot, ErrorMatch, ExtractedCard, ManagedProject, MywinsEntry, ProjectSummary, RecentProject, ThemeColorPair } from "./types.js";
 
-type OutputListener = (consoleId: string, chunk: string) => void;
+type OutputListener = (consoleId: string, chunk: string, position?: OutputPosition) => void;
 const { Terminal } = xtermHeadless as typeof import("@xterm/headless");
 
 interface ManagedConsole {
   activeLaunch?: string;
   record: ConsoleRecord;
   session?: TerminalSession;
-  mirror: HeadlessTerminal;
+  mirror?: HeadlessTerminal;
   tail: string;
   cards: ExtractedCard[];
   readHashes: Set<string>;
@@ -51,8 +52,61 @@ export class ConsoleManager {
     for (const definition of this.store?.load() ?? []) {
       this.createManaged(definition, false);
     }
-    this.cleanupTemporaryConsoles();
+    if (!terminalFactory.ownsLogs) this.cleanupTemporaryConsoles();
     this.startTemporaryCleanup();
+  }
+
+  async initializeRuntime(): Promise<void> {
+    await this.terminalFactory.initialize?.();
+    await this.restoreRuntime();
+    this.terminalFactory.onConnection?.(connected => {
+      if (this.disposed) return;
+      for (const item of this.consoles.values()) if (item.session) {
+        item.record.runtimeConnected = connected;
+        this.emit(item.record.id, "", { resync: true });
+      }
+      if (connected) void this.restoreRuntime().catch(error => console.error("[yconhost] Runtime recovery failed:", error));
+    });
+    this.cleanupTemporaryConsoles();
+  }
+
+  runtimeAvailable(): boolean { return this.terminalFactory.connected !== false; }
+
+  private async restoreRuntime(): Promise<void> {
+    if (!this.terminalFactory.listRuns || !this.terminalFactory.attach || this.disposed) return;
+    const runs = await this.terminalFactory.listRuns();
+    const seen = new Set<string>();
+    for (const run of runs) {
+      seen.add(run.consoleId);
+      let item = this.consoles.get(run.consoleId);
+      if (!item) item = this.requireConsole(this.createManaged({ ...run.definition, id: run.consoleId }, false).id);
+      if (item.record.readonly) continue;
+      const current = item.session?.position?.runId;
+      if (run.status !== "exited" && current !== run.runId) this.bindSession(item, this.terminalFactory.attach(run));
+      this.applyRuntimeState(item, run);
+      item.activeLaunch = run.launch;
+      item.record.pendingRestart = run.status !== "exited" && run.launch !== JSON.stringify([item.record.command, item.record.cwd, item.record.shell, item.record.args]);
+      item.tail = this.logs.read(item.record.id).slice(-this.settings.log.scrollbackBytes);
+      this.refreshCards(item);
+      this.emit(item.record.id, "", { resync: true });
+    }
+    for (const item of this.consoles.values()) if (item.session?.position && !seen.has(item.record.id)) {
+      item.session = undefined; item.record.pid = undefined; item.record.nativeCli = undefined; item.record.status = "exited"; item.record.runtimeConnected = true;
+    }
+    this.persist();
+  }
+
+  private applyRuntimeState(item: ManagedConsole, run: RuntimeRun): void {
+    Object.assign(item.record, { runId: run.runId, pid: run.pid, status: run.status, lastStartedAt: run.startedAt, lastInputAt: run.lastInputAt ?? item.record.lastInputAt,
+      lastOutputAt: run.lastOutputAt ?? item.record.lastOutputAt, lastAccessedAt: run.lastAccessedAt ?? item.record.lastAccessedAt,
+      exitCode: run.exitCode, nativeCli: run.nativeCli, runtimeConnected: this.runtimeAvailable() });
+    if (run.status === "exited") item.session = undefined;
+  }
+
+  async terminalScreen(id: string): Promise<TerminalScreen> {
+    const item = this.requireConsole(id);
+    if (item.session?.snapshot) return item.session.snapshot();
+    return { output: this.logs.read(id), cols: this.settings.terminal.cols, rows: this.settings.terminal.rows };
   }
 
   onOutput(listener: OutputListener): () => void {
@@ -115,7 +169,7 @@ export class ConsoleManager {
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.startTemporaryCleanup();
     for (const item of this.consoles.values()) {
-      if (!item.record.nativeCli?.visible) item.mirror.resize(settings.terminal.cols, settings.terminal.rows);
+      if (!item.record.nativeCli?.visible) item.mirror?.resize(settings.terminal.cols, settings.terminal.rows);
       item.session?.resize(settings.terminal.cols, settings.terminal.rows);
       item.tail = this.logs.read(item.record.id).slice(-settings.log.scrollbackBytes);
       this.refreshCards(item);
@@ -308,7 +362,7 @@ export class ConsoleManager {
       backgroundColor: request.backgroundColor ?? resolveConsoleBackground(request.background)
     };
 
-    const mirror = new Terminal({
+    const mirror = this.terminalFactory.ownsLogs ? undefined : new Terminal({
       allowProposedApi: true,
       convertEol: true,
       cols: this.settings.terminal.cols,
@@ -317,7 +371,7 @@ export class ConsoleManager {
     });
     const tail = this.logs.read(id).slice(-this.settings.log.scrollbackBytes);
     const managed: ManagedConsole = { record, mirror, tail, cards: [], readHashes: new Set(record.readCardHashes ?? []) };
-    if (tail) mirror.write(tail);
+    if (tail) mirror?.write(tail);
     this.refreshCards(managed);
     this.consoles.set(id, managed);
     this.persist();
@@ -325,6 +379,8 @@ export class ConsoleManager {
     if (startProcess) {
       try {
         const session = this.terminalFactory.spawn(shell, args, {
+          consoleId: id,
+          definition: this.requestFromRecord(record, true),
           cwd,
           env: process.env,
           cols: this.settings.terminal.cols,
@@ -333,39 +389,16 @@ export class ConsoleManager {
           yopenconsolePath: this.settings.terminal.yopenconsolePath,
           dataDir: this.settings.dataDir
         });
-        managed.session = session;
+        this.bindSession(managed, session);
         managed.activeLaunch = JSON.stringify([record.command, cwd, shell, args]);
         // A new native host uses absolute cursor positions from a fresh screen.
         // Keep older log/cards, but do not replay their terminal modes or screen contents into this run.
-        if (this.settings.terminal.host === "yopenconsole") this.capture(managed, "\x1b[?1049l\x1b[!p\x1b[2J\x1b[H");
+        if (this.settings.terminal.host === "yopenconsole" && !this.terminalFactory.ownsLogs) this.capture(managed, "\x1b[?1049l\x1b[!p\x1b[2J\x1b[H");
         record.pid = session.pid;
         record.status = session.onReady ? "starting" : "running";
         record.lastStartedAt = new Date().toISOString();
         this.persist();
 
-        session.onData((chunk) => this.capture(managed, chunk));
-        session.onReady?.((pid) => {
-          if (this.consoles.get(id) !== managed || managed.session !== session) return;
-          record.pid = pid;
-          record.status = "running";
-          record.updatedAt = new Date().toISOString();
-          this.persist();
-        });
-        session.onNativeWindow?.((state) => {
-          if (this.consoles.get(id) !== managed || managed.session !== session) return;
-          record.nativeCli = state;
-          managed.mirror.resize(state.cols, state.rows);
-        });
-        session.onExit((exitCode) => {
-          if (this.consoles.get(id) !== managed) return;
-          record.exitCode = exitCode;
-          record.pid = undefined;
-          record.nativeCli = undefined;
-          record.status = "exited";
-          record.updatedAt = new Date().toISOString();
-          managed.session = undefined;
-          this.capture(managed, `\r\n[yconhost] process exited with code ${exitCode ?? "unknown"}\r\n`);
-        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown terminal spawn error";
         record.pid = undefined;
@@ -377,6 +410,26 @@ export class ConsoleManager {
     }
 
     return record;
+  }
+
+  private bindSession(item: ManagedConsole, session: TerminalSession): void {
+    item.session = session;
+    item.record.runId = session.position?.runId;
+    if (this.terminalFactory.ownsLogs) item.record.runtimeConnected = this.runtimeAvailable();
+    const current = () => this.consoles.get(item.record.id) === item && item.session === session;
+    session.onData(chunk => { if (current()) this.capture(item, chunk); });
+    session.onReady?.(pid => {
+      if (!current()) return;
+      item.record.pid = pid; item.record.status = "running"; item.record.updatedAt = new Date().toISOString(); this.persist();
+    });
+    session.onNativeWindow?.(state => { if (current()) { item.record.nativeCli = state; item.mirror?.resize(state.cols, state.rows); } });
+    session.onState?.(state => { if (current()) { this.applyRuntimeState(item, state); this.schedulePersist(); } });
+    session.onExit(exitCode => {
+      if (this.consoles.get(item.record.id) !== item) return;
+      item.record.exitCode = exitCode; item.record.pid = undefined; item.record.nativeCli = undefined; item.record.status = "exited"; item.record.updatedAt = new Date().toISOString(); item.session = undefined;
+      if (!this.terminalFactory.ownsLogs) this.capture(item, `\r\n[yconhost] process exited with code ${exitCode ?? "unknown"}\r\n`);
+      else { item.tail = this.logs.read(item.record.id).slice(-this.settings.log.scrollbackBytes); this.refreshCards(item); this.schedulePersist(); }
+    });
   }
 
   rename(id: string, name: string): ConsoleRecord {
@@ -531,13 +584,13 @@ export class ConsoleManager {
     return tailLines ? this.logs.readTail(id, tailLines) : this.logs.read(id);
   }
 
-  write(id: string, data: string): void {
+  async write(id: string, data: string): Promise<void> {
     const item = this.requireConsole(id, true);
     this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
     }
-    item.session.write(data);
+    await item.session.write(data);
     const now = new Date().toISOString();
     item.record.lastInputAt = now;
     item.record.updatedAt = now;
@@ -555,7 +608,7 @@ export class ConsoleManager {
       throw new Error("command is required");
     }
     if (!options.wait) {
-      item.session.write(`${normalizedCommand}${lineEnding(item.record.shell)}`);
+      await item.session.write(`${normalizedCommand}${lineEnding(item.record.shell)}`);
       const now = new Date().toISOString();
       item.record.lastInputAt = now;
       item.record.updatedAt = now;
@@ -586,7 +639,8 @@ export class ConsoleManager {
         resolve({ status: "completed", id, command: normalizedCommand, output, timedOut: true });
       }, timeoutMs);
       try {
-        item.session?.write(commandWithCompletionMarker(item.record.shell, normalizedCommand, marker));
+        const delivery = item.session?.write(commandWithCompletionMarker(item.record.shell, normalizedCommand, marker));
+        if (delivery) void delivery.catch(error => { cleanup(); reject(error); });
         const now = new Date().toISOString();
         item.record.lastInputAt = now;
         item.record.updatedAt = now;
@@ -604,7 +658,7 @@ export class ConsoleManager {
     const safeCols = Math.max(20, Math.min(400, Math.floor(cols)));
     const safeRows = Math.max(5, Math.min(200, Math.floor(rows)));
     item.session?.resize(safeCols, safeRows);
-    if (!item.record.nativeCli?.visible) item.mirror.resize(safeCols, safeRows);
+    if (!item.record.nativeCli?.visible) item.mirror?.resize(safeCols, safeRows);
     this.refreshCards(item);
   }
 
@@ -619,14 +673,14 @@ export class ConsoleManager {
     return state;
   }
 
-  signal(id: string, signal: string): void {
+  async signal(id: string, signal: string): Promise<void> {
     const item = this.requireConsole(id, true);
     this.touchAccess(item);
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
     }
     if (signal === "ctrl+c") {
-      item.session.write("\x03");
+      await item.session.write("\x03");
     } else if (signal === "ctrl+break") {
       item.session.kill("SIGBREAK");
     } else {
@@ -642,7 +696,7 @@ export class ConsoleManager {
     const request = this.requestFromRecord(old.record, true);
     old.session?.kill();
     if (old.cardRefreshTimer) clearTimeout(old.cardRefreshTimer);
-    old.mirror.dispose();
+    old.mirror?.dispose();
     return this.createManaged(request, true);
   }
 
@@ -652,7 +706,7 @@ export class ConsoleManager {
     if (old.session) return old.record;
     const request = this.requestFromRecord(old.record, true);
     if (old.cardRefreshTimer) clearTimeout(old.cardRefreshTimer);
-    old.mirror.dispose();
+    old.mirror?.dispose();
     return this.createManaged(request, true);
   }
 
@@ -748,14 +802,14 @@ export class ConsoleManager {
 
   private capture(item: ManagedConsole, chunk: string): void {
     if (this.consoles.get(item.record.id) !== item) return;
-    this.logs.append(item.record.id, chunk);
+    if (!this.terminalFactory.ownsLogs) this.logs.append(item.record.id, chunk);
     item.tail = (item.tail + chunk).slice(-this.settings.log.scrollbackBytes);
     const now = new Date().toISOString();
     item.record.lastOutputAt = now;
     item.record.updatedAt = now;
     this.scheduleCardRefresh(item);
     this.schedulePersist();
-    this.emit(item.record.id, chunk);
+    this.emit(item.record.id, chunk, item.session?.position);
   }
 
   private scheduleCardRefresh(item: ManagedConsole): void {
@@ -784,9 +838,9 @@ export class ConsoleManager {
     }
   }
 
-  private emit(consoleId: string, chunk: string): void {
+  private emit(consoleId: string, chunk: string, position?: OutputPosition): void {
     for (const listener of this.listeners) {
-      listener(consoleId, chunk);
+      listener(consoleId, chunk, position);
     }
   }
 
@@ -800,6 +854,7 @@ export class ConsoleManager {
   }
 
   cleanupTemporaryConsoles(now = new Date()): string[] {
+    if (!this.runtimeAvailable()) return [];
     const ttlMs = temporaryConsoleTtlMs(this.settings);
     if (ttlMs <= 0) return [];
     const removed: string[] = [];
@@ -814,6 +869,7 @@ export class ConsoleManager {
   }
 
   private touchAccess(item: ManagedConsole): void {
+    this.terminalFactory.touch?.(item.record.id);
     item.record.lastAccessedAt = new Date().toISOString();
     this.schedulePersist();
   }
@@ -823,7 +879,7 @@ export class ConsoleManager {
     item.session?.kill();
     this.logs.flush(item.record.id);
     if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer);
-    item.mirror.dispose();
+    item.mirror?.dispose();
   }
 
   dispose(): void {
@@ -831,7 +887,11 @@ export class ConsoleManager {
     this.disposed = true;
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.persist();
-    for (const item of [...this.consoles.values()]) this.deleteManaged(item);
+    for (const item of [...this.consoles.values()]) {
+      if (this.terminalFactory.ownsLogs) { if (item.cardRefreshTimer) clearTimeout(item.cardRefreshTimer); item.mirror?.dispose(); }
+      else this.deleteManaged(item);
+    }
+    this.terminalFactory.disconnect?.();
     this.listeners.clear();
   }
 

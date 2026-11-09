@@ -15,6 +15,7 @@ export class LogStore {
 
   append(consoleId: string, chunk: string): void {
     this.buffers.set(consoleId, `${this.buffers.get(consoleId) ?? ""}${chunk}`);
+    if (Buffer.byteLength(this.buffers.get(consoleId)!, "utf8") >= 1024 * 1024) { this.flush(consoleId); return; }
     if (!this.flushTimers.has(consoleId)) {
       this.flushTimers.set(consoleId, setTimeout(() => this.flush(consoleId), 100));
     }

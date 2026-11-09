@@ -18,7 +18,7 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
   };
   const addProject = (body: any) => folders.configure({ ...body, type: body.type ?? "manual" });
 
-  app.get("/api/health", (_req, res) => { res.json({ ok: true }); });
+  app.get("/api/health", (_req, res) => { const ok = manager.runtimeAvailable(); res.status(ok ? 200 : 503).json({ ok, terminalHost: ok }); });
   app.get("/api/consoles", (req, res) => { res.json({ consoles: manager.list(req.query.project?.toString()) }); });
   app.get("/api/projects", (_req, res) => { res.json({ projects: manager.listProjects() }); });
   app.post("/api/projects", route(respond((req) => addProject(req.body))));
@@ -48,8 +48,8 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
   app.get("/api/consoles/:id", route(respond((req) => folders.snapshot(param(req, "id")))));
   app.get("/api/consoles/:id/output", route(respond(async (req) => ({ output: await folders.readOutput(param(req, "id"), req.query.tailLines ? Number(req.query.tailLines) : undefined) }))));
   app.get("/api/consoles/:id/state", route(respond((req) => folders.sessionState(param(req, "id"), req.query.tailLines ? Number(req.query.tailLines) : undefined))));
-  app.post("/api/consoles/:id/input", route(respond((req) => { manager.write(param(req, "id"), String(req.body.data ?? "")); return { ok: true }; })));
-  app.post("/api/consoles/:id/signal", route(respond((req) => { manager.signal(param(req, "id"), String(req.body.signal ?? "ctrl+c").toLowerCase()); return { ok: true }; })));
+  app.post("/api/consoles/:id/input", route(respond(async (req) => { await manager.write(param(req, "id"), String(req.body.data ?? "")); return { ok: true }; })));
+  app.post("/api/consoles/:id/signal", route(respond(async (req) => { await manager.signal(param(req, "id"), String(req.body.signal ?? "ctrl+c").toLowerCase()); return { ok: true }; })));
   app.post("/api/consoles/:id/restart", route(respond((req) => manager.restart(param(req, "id")))));
   app.post("/api/consoles/:id/start", route(respond((req) => manager.start(param(req, "id")))));
   app.post("/api/consoles/:id/name", route(respond((req) => folders.renameEntry(param(req, "id"), String(req.body.name ?? "")))));
@@ -94,7 +94,7 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
     { name: "delete_folder_entry", description: "Delete/disable an entry in its source, stopping its owned process only after source success. Requires confirmed=true. Codex marks H1 with DELETED; PM2 is readonly." + sourceWriteAdvice, properties: { id: string, confirmed: boolean, confirmSourceWrite: boolean }, required: ["id", "confirmed"], run: (a) => sourceWrite(manager.get(a.id).project, a, async () => { await folders.deleteEntry(a.id, a.confirmed === true); return { ok: true }; }) },
     { name: "get_console_state", description: "Read session status, last input/output timestamps and the last few output lines. tailLines defaults to 8.", properties: { id: string, tailLines: { type: "number" } }, required: ["id"], run: (a) => folders.sessionState(a.id, a.tailLines) },
     { name: "read_console", description: "Read output of an owned or external readonly console.", properties: { id: string, tailLines: { type: "number" } }, required: ["id"], run: (a) => folders.readOutput(a.id, a.tailLines) },
-    { name: "write_console", description: "Send raw input to a running writable console.", properties: { id: string, data: string }, required: ["id", "data"], run: (a) => { manager.write(a.id, a.data); return "ok"; } },
+    { name: "write_console", description: "Send raw input to a running writable console and await terminal-host delivery acknowledgement. Never automatically retries uncertain delivery.", properties: { id: string, data: string }, required: ["id", "data"], run: async (a) => { await manager.write(a.id, a.data); return "ok"; } },
     { name: "send_console_command", description: "Send a command line to an existing running console and return immediately without waiting for completion.", properties: { id: string, command: string }, required: ["id", "command"], run: (a) => manager.runCommand(a.id, a.command, { wait: false }) },
     { name: "run_console_command", description: "Run a command line in an existing running console, wait for its completion marker and return captured output and exitCode. timeoutMs defaults to 30000.", properties: { id: string, command: string, timeoutMs: { type: "number" } }, required: ["id", "command"], run: (a) => manager.runCommand(a.id, a.command, { wait: true, timeoutMs: a.timeoutMs }) },
     { name: "create_console", description: "Create and start a temporary console. Defaults to AGENTS_TEMP, preferred for one-off agent requests. persistent=true retains it; source-controlled folders reject this.", properties: consoleProperties, run: (a) => manualConsole({ ...a, project: a.project ?? "AGENTS_TEMP", persistent: a.persistent === true }) },
@@ -148,28 +148,52 @@ export function attachWebSocket(server: Server, manager: ConsoleManager): WebSoc
   const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (socket) => {
     let subscribedConsoleId: string | undefined;
-    const unsubscribe = manager.onOutput((consoleId, chunk) => {
+    let initializing = false;
+    let generation = 0;
+    let buffered: Array<{ chunk: string; runId?: string; sequence?: number }> = [];
+    let bufferedBytes = 0;
+    const send = (value: unknown) => {
+      if (socket.readyState !== 1) return;
+      if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Output backlog; reconnect for snapshot"); return; }
+      socket.send(JSON.stringify(value));
+    };
+    const unsubscribe = manager.onOutput((consoleId, chunk, position) => {
       if (consoleId !== subscribedConsoleId) return;
-      socket.send(JSON.stringify({ type: "output", consoleId, chunk }));
+      if (position?.resync) { socket.close(1013, "Terminal runtime reconnected; resync"); return; }
+      if (initializing) {
+        bufferedBytes += Buffer.byteLength(chunk);
+        if (bufferedBytes > 4 * 1024 * 1024) { socket.close(1013, "Snapshot backlog; reconnect"); return; }
+        buffered.push({ chunk, ...position });
+      } else send({ type: "output", consoleId, chunk, ...position });
     });
-    socket.on("message", (raw) => {
-      const message = JSON.parse(raw.toString()) as { type: string; consoleId: string; data?: string; cols?: number; rows?: number };
+    socket.on("message", async (raw) => {
+      let message: { type: string; consoleId: string; data?: string; cols?: number; rows?: number };
+      try { message = JSON.parse(raw.toString()); } catch { socket.close(1007, "Invalid message"); return; }
       if (message.type === "subscribe") {
         subscribedConsoleId = message.consoleId;
+        initializing = true; buffered = []; bufferedBytes = 0;
+        const current = ++generation;
+        try {
+          const snapshot = await manager.terminalScreen(message.consoleId);
+          if (current !== generation || socket.readyState !== 1) return;
+          send({ type: "snapshot", consoleId: message.consoleId, ...snapshot });
+          for (const event of buffered) if (snapshot.sequence === undefined || event.runId !== snapshot.runId || (event.sequence ?? 0) > snapshot.sequence) send({ type: "output", consoleId: message.consoleId, ...event });
+          initializing = false; buffered = []; bufferedBytes = 0;
+        } catch (error) { send({ type: "error", consoleId: message.consoleId, message: String(error) }); socket.close(1013, "Snapshot unavailable"); }
         return;
       }
       if (message.type === "input" && message.data !== undefined) {
         try {
-          manager.write(message.consoleId, message.data);
+          await manager.write(message.consoleId, message.data);
         } catch (error) {
-          socket.send(JSON.stringify({ type: "error", consoleId: message.consoleId, message: error instanceof Error ? error.message : "Unknown error" }));
+          send({ type: "error", consoleId: message.consoleId, message: error instanceof Error ? error.message : "Unknown error" });
         }
       }
       if (message.type === "resize" && message.cols && message.rows) {
         try {
           manager.resize(message.consoleId, message.cols, message.rows);
         } catch (error) {
-          socket.send(JSON.stringify({ type: "error", consoleId: message.consoleId, message: error instanceof Error ? error.message : "Unknown error" }));
+          send({ type: "error", consoleId: message.consoleId, message: error instanceof Error ? error.message : "Unknown error" });
         }
       }
     });

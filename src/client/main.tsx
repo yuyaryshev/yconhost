@@ -1096,17 +1096,6 @@ function TerminalPane({
     if (nativeRef.current?.visible) terminal.resize(nativeRef.current.cols, nativeRef.current.rows);
     terminalRef.current = terminal;
 
-    fetch(`/api/consoles/${consoleRecord.id}/output`)
-      .then((response) => response.json())
-      .then((data: { output: string }) => {
-        if (disposed) return;
-        terminal.write(data.output, () => {
-          if (disposed) return;
-          setScreenReady(true);
-          window.setTimeout(() => scrollToTerminal("auto"), 0);
-        });
-      });
-
     const sendInput = (data: string) => {
       if (isReadonly || isWindowsTerminalReply(consoleRecord.shell, data)) return;
       if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -1126,19 +1115,39 @@ function TerminalPane({
     let reconnectTimer: number | undefined;
     const connectSocket = () => {
       if (disposed) return;
+      terminal.options.disableStdin = true;
+      setScreenReady(false);
       const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
       socketRef.current = socket;
+      let runId: string | undefined;
+      let sequence = 0;
       socket.addEventListener("message", (event) => {
-        const message = JSON.parse(event.data) as { type: string; consoleId: string; chunk: string };
+        const message = JSON.parse(event.data) as { type: string; consoleId: string; chunk: string; output: string; cols: number; rows: number; runId?: string; sequence?: number; message?: string };
+        if (disposed || socketRef.current !== socket || message.consoleId !== consoleRecord.id) return;
+        if (message.type === "snapshot") {
+          runId = message.runId; sequence = message.sequence ?? 0;
+          terminal.reset(); terminal.resize(message.cols, message.rows);
+          terminal.write(message.output, () => {
+            if (disposed || socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+            terminal.options.disableStdin = isReadonly;
+            setScreenReady(true); setNativeError(""); sendResize();
+            window.setTimeout(() => scrollToTerminal("auto"), 0);
+          });
+        }
         if (message.type === "output" && message.consoleId === consoleRecord.id) {
+          if (message.sequence !== undefined && message.runId === runId && message.sequence <= sequence) return;
+          if (message.sequence !== undefined) sequence = message.sequence;
           terminal.write(message.chunk);
         }
+        if (message.type === "error") setNativeError(message.message ?? "Terminal connection error");
       });
       socket.addEventListener("open", () => {
         socket.send(JSON.stringify({ type: "subscribe", consoleId: consoleRecord.id }));
         sendResize();
       });
       socket.addEventListener("close", () => {
+        if (disposed || socketRef.current !== socket) return;
+        terminal.options.disableStdin = true; setScreenReady(false);
         if (!disposed) reconnectTimer = window.setTimeout(connectSocket, 300);
       });
       socket.addEventListener("error", () => socket.close());
