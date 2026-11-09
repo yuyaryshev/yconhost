@@ -74,15 +74,20 @@ export class ConsoleManager {
 
   private async restoreRuntime(): Promise<void> {
     if (!this.terminalFactory.listRuns || !this.terminalFactory.attach || this.disposed) return;
+    await this.configureRuntime();
     const runs = await this.terminalFactory.listRuns();
     const seen = new Set<string>();
     for (const run of runs) {
       seen.add(run.consoleId);
+      if (run.expired) {
+        const expired = this.consoles.get(run.consoleId);
+        if (expired?.record.persistent === false) { expired.session = undefined; this.deleteManaged(expired); }
+        continue;
+      }
       let item = this.consoles.get(run.consoleId);
       if (!item) item = this.requireConsole(this.createManaged({ ...run.definition, id: run.consoleId }, false).id);
       if (item.record.readonly) continue;
-      const current = item.session?.position?.runId;
-      if (run.status !== "exited" && current !== run.runId) this.bindSession(item, this.terminalFactory.attach(run));
+      if (run.status !== "exited") this.bindSession(item, this.terminalFactory.attach(run));
       this.applyRuntimeState(item, run);
       item.activeLaunch = run.launch;
       item.record.pendingRestart = run.status !== "exited" && run.launch !== JSON.stringify([item.record.command, item.record.cwd, item.record.shell, item.record.args]);
@@ -97,6 +102,7 @@ export class ConsoleManager {
   }
 
   private applyRuntimeState(item: ManagedConsole, run: RuntimeRun): void {
+    if (run.expired && item.record.persistent === false) { item.session = undefined; this.deleteManaged(item); this.persist(); return; }
     Object.assign(item.record, { runId: run.runId, pid: run.pid, status: run.status, lastStartedAt: run.startedAt, lastInputAt: run.lastInputAt ?? item.record.lastInputAt,
       lastOutputAt: run.lastOutputAt ?? item.record.lastOutputAt, lastAccessedAt: run.lastAccessedAt ?? item.record.lastAccessedAt,
       exitCode: run.exitCode, nativeCli: run.nativeCli, runtimeConnected: this.runtimeAvailable() });
@@ -176,6 +182,8 @@ export class ConsoleManager {
     }
     return this.settings;
   }
+
+  async configureRuntime(): Promise<void> { await this.terminalFactory.configure?.(this.settings); }
 
   create(request: ConsoleCreateRequest): ConsoleRecord {
     return this.createManaged(request, true);
@@ -262,6 +270,7 @@ export class ConsoleManager {
       const args = definition.args ?? (command ? commandArgs(shell, command) : []);
       const cwd = path.resolve(definition.cwd || process.cwd());
       const item = existing ?? this.requireConsole(this.createManaged({
+        id: definition.readonly ? `external-${crypto.createHash("sha256").update(`${folder.id}\0${definition.key}`).digest("hex")}` : undefined,
         project: folder.name, folderId: folder.id, name: definition.name, cwd, command, shell, args,
         persistent: true, projectPath: folder.projectPath, background: definition.background
       }, false).id);
@@ -426,6 +435,7 @@ export class ConsoleManager {
     session.onState?.(state => { if (current()) { this.applyRuntimeState(item, state); this.schedulePersist(); } });
     session.onExit(exitCode => {
       if (this.consoles.get(item.record.id) !== item) return;
+      if (item.session && item.session !== session) return;
       item.record.exitCode = exitCode; item.record.pid = undefined; item.record.nativeCli = undefined; item.record.status = "exited"; item.record.updatedAt = new Date().toISOString(); item.session = undefined;
       if (!this.terminalFactory.ownsLogs) this.capture(item, `\r\n[yconhost] process exited with code ${exitCode ?? "unknown"}\r\n`);
       else { item.tail = this.logs.read(item.record.id).slice(-this.settings.log.scrollbackBytes); this.refreshCards(item); this.schedulePersist(); }
@@ -590,8 +600,9 @@ export class ConsoleManager {
     if (!item.session) {
       throw new Error(`Console ${id} is not running`);
     }
-    await item.session.write(data);
-    const now = new Date().toISOString();
+    const session = item.session;
+    await session.write(data);
+    const now = session.lastInputAt ?? new Date().toISOString();
     item.record.lastInputAt = now;
     item.record.updatedAt = now;
     this.persist();

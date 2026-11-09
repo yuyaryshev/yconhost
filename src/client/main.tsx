@@ -216,10 +216,11 @@ function App() {
   }
 
   useEffect(() => {
-    refresh();
-    refreshRecentProjects();
-    refreshSettings();
-    const timer = window.setInterval(refresh, 2000);
+    const poll = () => { void refresh().catch(() => undefined); };
+    poll();
+    void refreshRecentProjects().catch(() => undefined);
+    void refreshSettings().catch(() => undefined);
+    const timer = window.setInterval(poll, 2000);
     return () => window.clearInterval(timer);
   }, []);
 

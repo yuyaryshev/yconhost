@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import type { ConsoleCreateRequest, NativeWindowState } from "./types.js";
+import type { AppSettings, ConsoleCreateRequest, NativeWindowState } from "./types.js";
 
 export const runtimeVersion = 1;
 export const maxRuntimeFrame = 16 * 1024 * 1024;
@@ -25,6 +25,7 @@ export interface RuntimeRun {
   exitCode?: number;
   nativeCli?: NativeWindowState;
   sequence: number;
+  expired?: boolean;
 }
 export interface TerminalScreen {
   output: string;
@@ -39,3 +40,11 @@ export type RuntimeEvent = { event: "output"; consoleId: string; runId: string; 
 export interface RuntimeRequest { id: string; method: string; args?: any; expiresAt: number }
 
 export function validConsoleId(value: unknown): value is string { return typeof value === "string" && /^[\w-]{1,160}$/.test(value); }
+
+export function validateRuntimePolicy(value: Pick<AppSettings, "log" | "temporaryConsoles">): void {
+  const checks = [
+    [value?.log?.maxBytes, 1024, 1024 * 1024 * 1024], [value?.log?.rotateFiles, 1, 32],
+    [value?.log?.scrollbackBytes, 1024, 64 * 1024 * 1024], [value?.temporaryConsoles?.cleanupIntervalMs, 1000, 86_400_000]
+  ];
+  if (checks.some(([number, min, max]) => !Number.isInteger(number) || number < min || number > max) || !Number.isFinite(value?.temporaryConsoles?.ttlHours) || value.temporaryConsoles.ttlHours < 0 || value.temporaryConsoles.ttlHours > 8760) throw new Error("Invalid terminal log/temporary-console limits");
+}

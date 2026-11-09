@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   await folders.initialize();
   const app = createApp(manager, { folders });
   const server = http.createServer(app);
-  const wss = attachWebSocket(server, manager);
+  const wss = attachWebSocket(server, manager, folders);
 
   let shuttingDown = false;
   function shutdown(): void {

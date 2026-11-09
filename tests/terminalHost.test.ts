@@ -144,6 +144,66 @@ describe("Persistent terminal host", () => {
     expect(factory.sessions).toHaveLength(0);
   });
 
+  it("automatically recovers a broken pipe and resynchronizes offline output without duplicating the process", async () => {
+    const running = manager.create({ name: "Reconnect" });
+    await until(() => manager.get(running.id).status === "running");
+    const before = manager.get(running.id);
+    (client as unknown as { socket: net.Socket }).socket.destroy();
+    await until(() => !manager.runtimeAvailable());
+    factory.sessions[0].push("OUTPUT_DURING_PIPE_LOSS\r\n");
+    await until(() => manager.runtimeAvailable() && manager.get(running.id).outputTail.includes("OUTPUT_DURING_PIPE_LOSS"));
+    expect(manager.get(running.id)).toMatchObject({ pid: before.pid, runId: before.runId, runtimeConnected: true });
+    expect(factory.sessions).toHaveLength(1);
+    await manager.write(running.id, "after-reconnect");
+    expect(factory.sessions[0].writes).toEqual(["after-reconnect"]);
+  });
+
+  it("recovers an already-started process after its original start acknowledgement is lost", async () => {
+    const rpc = client.request.bind(client);
+    client.request = async (method, args, handshake) => {
+      const result = await rpc(method, args, handshake);
+      if (method === "start") {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        throw new Error("Simulated lost start acknowledgement");
+      }
+      return result;
+    };
+    const running = manager.create({ name: "Lost start acknowledgement" });
+    await until(() => factory.sessions.length === 1);
+    const pid = factory.sessions[0].pid;
+    (client as unknown as { socket: net.Socket }).socket.destroy();
+    await until(() => !manager.runtimeAvailable());
+    await until(() => manager.runtimeAvailable() && manager.get(running.id).pid === pid && manager.get(running.id).status === "running");
+    await manager.write(running.id, "only-once");
+    expect(factory.sessions).toHaveLength(1);
+    expect(factory.sessions[0].writes).toEqual(["only-once"]);
+    expect(factory.sessions[0].killed).toBe(false);
+  });
+
+  it("applies log rotation policy to the owning host without restarting its process", async () => {
+    const running = manager.create({ name: "Policy" });
+    await until(() => manager.get(running.id).status === "running");
+    const before = manager.get(running.id);
+    manager.updateSettings({ ...settings, log: { ...settings.log, maxBytes: 2048 } });
+    await manager.configureRuntime();
+    factory.sessions[0].push("x".repeat(3000));
+    const rotated = path.join(dir, "logs", `${running.id}.log.1`);
+    await until(() => fs.existsSync(rotated));
+    expect(fs.readFileSync(rotated, "utf8")).toContain("x".repeat(3000));
+    expect(manager.get(running.id)).toMatchObject({ pid: before.pid, runId: before.runId });
+    await expect(client.configure({ ...settings, log: { ...settings.log, rotateFiles: -1 } })).rejects.toThrow("limits");
+  });
+
+  it("removes an expired temporary slot rather than retaining it for another TTL after its exit marker", async () => {
+    manager.updateSettings({ ...settings, temporaryConsoles: { ttlHours: 1 / 3600, cleanupIntervalMs: 1000 } });
+    await manager.configureRuntime();
+    const temporary = manager.create({ name: "Expiring", persistent: false });
+    await until(() => manager.get(temporary.id).status === "running");
+    await until(() => !manager.list().some(item => item.id === temporary.id));
+    expect(factory.sessions[0].killed).toBe(true);
+    expect(new ConsoleStore(settings).load().some(item => item.id === temporary.id)).toBe(false);
+  });
+
   it("authenticates pipe clients, rejects stale operations and deduplicates a repeated acknowledged input request", async () => {
     const running = manager.create({ name: "Dedup" });
     await until(() => manager.get(running.id).status === "running");
@@ -173,7 +233,7 @@ describe("Persistent terminal host", () => {
     const bad = net.createConnection(host.address);
     try {
       const message = new Promise<string>(resolve => bad.once("data", chunk => resolve(chunk.toString())));
-      bad.write(JSON.stringify({ id: "bad", method: "hello", args: { version: 1, token: "a".repeat(64) } }) + "\n");
+      bad.write(JSON.stringify({ id: "bad", method: "hello", args: { version: 1, token: "я".repeat(64) } }) + "\n");
       expect(await message).toContain("authentication/protocol mismatch");
     } finally { bad.destroy(); }
   });

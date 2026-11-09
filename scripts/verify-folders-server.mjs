@@ -29,7 +29,7 @@ await folders.ensureManual("Default");
 await folders.initialize();
 process.chdir(directory);
 const server = http.createServer(createApp(manager, { folders }));
-const sockets = attachWebSocket(server, manager);
+const sockets = attachWebSocket(server, manager, folders);
 function shutdown() {
   folders.dispose(); manager.dispose();
   for (const client of sockets.clients) client.terminate();

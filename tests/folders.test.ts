@@ -178,6 +178,17 @@ describe("Generic folders", () => {
     expect(factory.sessions).toHaveLength(0);
   });
 
+  it("keeps external source IDs stable after HTTP manager recreation", async () => {
+    await source("monitor", "export function list() { return [{ key: 'external', name: 'Service', readonly: true }]; } export function readOutput() { return ''; }");
+    const id = manager.list("monitor")[0].id;
+    folders.dispose(); manager.dispose();
+    manager = new ConsoleManager(settings, new LogStore(settings), factory, new ConsoleStore(settings), new ProjectStore(settings));
+    folders = new FolderService(manager);
+    await folders.initialize();
+    expect(manager.list("monitor")[0].id).toBe(id);
+    expect(factory.sessions).toHaveLength(0);
+  });
+
   it("exposes folder CRUD and capability errors through HTTP and MCP, without legacy import", async () => {
     await source();
     const call = (name: string, args: object) => request(app).post("/mcp").send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }).expect(200);

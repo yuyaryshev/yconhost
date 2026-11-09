@@ -34,7 +34,11 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
   app.get("/api/recent-projects", (_req, res) => { res.json({ projects: manager.recentProjects() }); });
   app.delete("/api/recent-projects", route(respond((req) => ({ projects: manager.removeRecentProject(String(req.body.projectPath ?? "")) }))));
   app.get("/api/settings", (_req, res) => { res.json({ settings: manager.getSettings() }); });
-  app.post("/api/settings", route(respond((req) => ({ settings: manager.updateSettings(saveSettings(req.body.settings ?? req.body)) }))));
+  app.post("/api/settings", route(respond(async (req) => {
+    const settings = manager.updateSettings(saveSettings(req.body.settings ?? req.body));
+    await manager.configureRuntime();
+    return { settings };
+  })));
   app.post("/api/consoles", route(respond((req) => manualConsole(req.body))));
   app.post("/api/batch", route(respond(async (req) => {
     if (typeof req.body.projectPath !== "string" || !req.body.projectPath) throw new Error("projectPath is required");
@@ -144,7 +148,7 @@ export function createApp(manager: ConsoleManager, options: { folders?: FolderSe
   return app;
 }
 
-export function attachWebSocket(server: Server, manager: ConsoleManager): WebSocketServer {
+export function attachWebSocket(server: Server, manager: ConsoleManager, folders?: FolderService): WebSocketServer {
   const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (socket) => {
     let subscribedConsoleId: string | undefined;
@@ -174,7 +178,8 @@ export function attachWebSocket(server: Server, manager: ConsoleManager): WebSoc
         initializing = true; buffered = []; bufferedBytes = 0;
         const current = ++generation;
         try {
-          const snapshot = await manager.terminalScreen(message.consoleId);
+          const record = manager.list().find(item => item.id === message.consoleId);
+          const snapshot = record?.readonly && folders ? { output: await folders.readOutput(message.consoleId), cols: manager.getSettings().terminal.cols, rows: manager.getSettings().terminal.rows } : await manager.terminalScreen(message.consoleId);
           if (current !== generation || socket.readyState !== 1) return;
           send({ type: "snapshot", consoleId: message.consoleId, ...snapshot });
           for (const event of buffered) if (snapshot.sequence === undefined || event.runId !== snapshot.runId || (event.sequence ?? 0) > snapshot.sequence) send({ type: "output", consoleId: message.consoleId, ...event });

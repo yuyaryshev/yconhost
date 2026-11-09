@@ -23,9 +23,10 @@ The host choice applies to newly started/restarted consoles only; existing sessi
 keep their backend. PM2 read-only consoles do not expose this action. Starting the
 service still restores idle slots only, never launches their commands.
 
-Upgrading the server itself requires its normal PM2 restart, which terminates
-existing console sessions. Coordinate that restart before activation. Then choose
-the host in Preferences and explicitly start/restart the desired slots.
+The separate PM2 terminal host owns new sessions. Restarting only `yconhost`
+reattaches them without terminating their processes. Restarting
+`yconhost-terminal-host` itself still stops its consoles and requires coordination.
+Choose the host in Preferences and explicitly start/restart the desired slots.
 
 When the native window is visible, its viewport owns the dimensions; browser
 resize requests are remembered but not applied to the host. Hiding the window
@@ -34,18 +35,20 @@ the user's request.
 
 ## Implementation
 
-Each yopenconsole terminal runs node-pty in an isolated hidden worker. A versioned
+Each yopenconsole terminal runs node-pty in an isolated hidden worker owned by
+the terminal host, not the restartable HTTP process. A versioned
 runtime under `<dataDir>/native-runtimes` contains node-pty's pinned native addon
 and DLL, and the configured executable staged as the required sibling name
 `OpenConsole.exe`. No system files or shared node_modules binaries are replaced.
 Standard and yopenconsole sessions can coexist. Shell/process-tree termination,
 native handle release and output-worker disposal follow the existing cleanup rules.
-Loss of the server IPC connection also tears down the worker's console.
+Loss of the terminal-host-to-worker IPC connection tears down the worker's console;
+loss of the HTTP-server connection does not.
 
-The proposed separation of the HTTP server and terminal ownership is documented
+The separation of the HTTP server and terminal ownership is documented
 in [server_restart_without_console_loss.md](server_restart_without_console_loss.md).
-It is not implemented yet; do not restart the live service without coordinating
-the current console sessions.
+It was implemented and verified on 2026-11-09. Do not restart the terminal host
+when intending only an HTTP/UI update.
 
 The host receives a unique `YOPENCONSOLE_PIPE_ID` in its environment. Its control
 pipe is serialized and used for `close-mode hide`, `show`, `hide`, `visible`, and

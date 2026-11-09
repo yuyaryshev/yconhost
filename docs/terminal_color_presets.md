@@ -43,6 +43,7 @@ Playwright: dark 1440x1000 и light 390x844, без горизонтальног
 все соответствуют computed RGB, у CLI_GREEN в обеих темах `(0,50,0)`.
 Артефакты: `output/playwright/color-presets-desktop-dark.png`,
 `color-presets-mobile-light.png`, `colors-pixel-samples.json`.
-Тестовый PM2-процесс `yconhost-colors-check` удалён, рабочий сервер и его
-`dist` не менялись. Изменения ожидают согласованного внедрения вместе
-с предыдущей доработкой `pinned_text`.
+Тестовый PM2-процесс `yconhost-colors-check` удалён. Первоначальная проверка
+не меняла рабочий сервер. После последующего разрешения пользователя
+доработка развёрнута на `4011` вместе с `pinned_text` и terminal host;
+готовая CLI-палитра повторно проверена через продуктивный браузерный UI.

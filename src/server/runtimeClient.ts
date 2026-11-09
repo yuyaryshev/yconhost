@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import { EventEmitter } from "node:events";
 import type { TerminalFactory, TerminalOptions, TerminalSession } from "./terminal.js";
-import type { NativeWindowState } from "./types.js";
+import type { AppSettings, NativeWindowState } from "./types.js";
 import { maxRuntimeFrame, maxRuntimeBacklog, runtimeAddress, runtimeTokenPath, runtimeVersion, type RuntimeEvent, type RuntimeRun, type TerminalScreen } from "./runtimeProtocol.js";
 
 export class RuntimeClient implements TerminalFactory {
@@ -120,9 +120,9 @@ export class RuntimeClient implements TerminalFactory {
     }
   }
   onConnection(listener: (connected: boolean) => void): void { this.events.on("connection", listener); }
+  async configure(settings: AppSettings): Promise<void> { await this.request("configure", { log: settings.log, temporaryConsoles: settings.temporaryConsoles }); }
   attach(run: RuntimeRun): TerminalSession {
-    const previous = this.sessions.get(run.consoleId);
-    if (previous?.state.runId === run.runId) { previous.state = run; return previous; }
+    // A listed run is authoritative even if its earlier start acknowledgement was lost.
     const session = new RemoteSession(this, run);
     this.sessions.set(run.consoleId, session);
     return session;
@@ -168,9 +168,10 @@ class RemoteSession implements TerminalSession {
   ready: Promise<void> = Promise.resolve();
   constructor(private readonly client: RuntimeClient, public state: RuntimeRun) {}
   get pid() { return this.state.pid; }
+  get lastInputAt() { return this.state.lastInputAt; }
   get position() { return { runId: this.state.runId, sequence: this.state.sequence }; }
   async call<T = any>(method: string, args: object = {}): Promise<T> { await this.ready; return this.client.request(method, { ...args, consoleId: this.state.consoleId, runId: this.state.runId }); }
-  async write(data: string): Promise<void> { await this.call("input", { data }); }
+  async write(data: string): Promise<void> { const reply = await this.call<{ at: string }>("input", { data }); this.state.lastInputAt = reply.at; }
   resize(cols: number, rows: number): void { void this.call("resize", { cols, rows }).catch(error => this.events.emit("state", { ...this.state, runtimeError: error.message })); }
   kill(): void { this.client.closeSession(this); }
   onData(listener: (chunk: string) => void): void { this.events.on("data", listener); }

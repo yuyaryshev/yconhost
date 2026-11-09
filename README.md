@@ -19,6 +19,7 @@ yconhost is a local web UI/API for supervising host command processes through a 
 - Disable ANSI error parsing per console.
 - Expose HTTP endpoints and a minimal HTTP MCP endpoint.
 - Run as a production pm2 process.
+- Restart the HTTP/MCP server without stopping running consoles; a separate PM2 terminal host owns their processes, logs and xterm state.
 
 ## Commands
 
@@ -26,7 +27,12 @@ yconhost is a local web UI/API for supervising host command processes through a 
 - `pnpm test` - run endpoint and output analyzer tests.
 - `pnpm typecheck` - run TypeScript checks.
 - `pnpm build` - build server and client.
-- `pnpm start` - run the production build.
+- `pnpm start:terminal-host` - run the terminal host (normally managed by PM2).
+- `pnpm start` - run the production HTTP server; requires a running terminal host using the same settings/dataDir.
+
+Production: `pm2 start ecosystem.config.cjs`, then `pm2 save`. For a server-only
+upgrade use `pm2 restart yconhost`, **not** `pm2 restart all` or a restart of
+`yconhost-terminal-host`. See [restart operations](docs/server_restart_without_console_loss.md).
 
 The fixed production address is **http://127.0.0.1:4011/**. The default server port,
 local `settings.json5`, and `ecosystem.config.cjs` use port `4011`. PM2 pins the
@@ -59,5 +65,5 @@ one is occupied. Explicit port overrides are only needed for isolated tests.
 ## Current Limitations
 
 - The default backend uses ConPTY pipes. The optional yopenconsole backend also supports showing/hiding the same running console in a native window; see [Native CLI](docs/native_cli.md).
-- Re-attach to already running processes after yconhost restart is not supported in the simplified pipe-only model.
+- Existing broker-owned sessions reattach after an HTTP-server restart, including native CLI and TUI state. Restarting the terminal host itself or Windows still ends its sessions. Saved commands are never automatically started after reboot.
 - Chrome MCP UI testing may fail when the shared Chrome DevTools MCP profile is already locked by another process.

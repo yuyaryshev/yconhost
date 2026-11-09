@@ -5,7 +5,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import pty from "node-pty";
 import treeKill from "tree-kill";
-import type { ConsoleCreateRequest, NativeWindowState } from "./types.js";
+import type { AppSettings, ConsoleCreateRequest, NativeWindowState } from "./types.js";
 import type { RuntimeRun, TerminalScreen, OutputPosition } from "./runtimeProtocol.js";
 import { spawnNativeTerminal } from "./nativeTerminal.js";
 
@@ -23,6 +23,7 @@ export interface TerminalOptions {
 
 export interface TerminalSession {
   readonly pid?: number;
+  readonly lastInputAt?: string;
   write(data: string): void | Promise<void>;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
@@ -46,6 +47,7 @@ export interface TerminalFactory {
   onConnection?(listener: (connected: boolean) => void): void;
   touch?(id: string): void;
   disconnect?(): void;
+  configure?(settings: AppSettings): Promise<void>;
 }
 
 export class PtyTerminalFactory implements TerminalFactory {

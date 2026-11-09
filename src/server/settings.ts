@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import JSON5 from "json5";
 import type { AppSettings } from "./types.js";
+import { validateRuntimePolicy } from "./runtimeProtocol.js";
 
 const defaults: AppSettings = {
   host: process.env.YCONHOST_HOST ?? "127.0.0.1",
@@ -38,7 +39,7 @@ const defaults: AppSettings = {
 function mergeSettings(value: Partial<AppSettings>): AppSettings {
   const host = value.terminal?.host;
   if (host !== undefined && host !== "standard" && host !== "yopenconsole") throw new Error("Unknown terminal host");
-  return {
+  const merged = {
     ...defaults,
     ...value,
     terminal: {
@@ -62,6 +63,8 @@ function mergeSettings(value: Partial<AppSettings>): AppSettings {
       ...(value.temporaryConsoles ?? {})
     }
   };
+  validateRuntimePolicy(merged);
+  return merged;
 }
 
 export function loadSettings(filePath = process.env.YCONHOST_SETTINGS_PATH ?? path.resolve("settings.json5")): AppSettings {

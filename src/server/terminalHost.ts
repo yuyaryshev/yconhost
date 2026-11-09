@@ -6,7 +6,7 @@ import serializePackage from "@xterm/addon-serialize";
 import { LogStore } from "./logStore.js";
 import { PtyTerminalFactory, type TerminalFactory, type TerminalSession, type TerminalOptions } from "./terminal.js";
 import type { AppSettings, ConsoleCreateRequest } from "./types.js";
-import { maxRuntimeBacklog, maxRuntimeFrame, runtimeAddress, runtimeTokenPath, runtimeVersion, validConsoleId, type RuntimeRun, type RuntimeRequest, type RuntimeEvent, type TerminalScreen } from "./runtimeProtocol.js";
+import { maxRuntimeBacklog, maxRuntimeFrame, runtimeAddress, runtimeTokenPath, runtimeVersion, validConsoleId, validateRuntimePolicy, type RuntimeRun, type RuntimeRequest, type RuntimeEvent, type TerminalScreen } from "./runtimeProtocol.js";
 
 const { Terminal } = xtermHeadless;
 const { SerializeAddon } = serializePackage;
@@ -22,7 +22,7 @@ export class TerminalHost {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly requests = new Map<string, { signature: string; expiresAt: number; result: Promise<unknown> }>();
   private readonly logs: LogStore;
-  private readonly cleanup: ReturnType<typeof setInterval>;
+  private cleanup: ReturnType<typeof setInterval>;
   private closing = false;
 
   constructor(private readonly settings: AppSettings, private readonly factory: TerminalFactory = new PtyTerminalFactory()) {
@@ -68,7 +68,7 @@ export class TerminalHost {
         if (!request || typeof request.id !== "string" || request.id.length > 100 || typeof request.method !== "string") { socket.destroy(); return; }
         if (!this.authorized.has(socket)) {
           const supplied = request.args?.token;
-          const valid = request.method === "hello" && request.args?.version === runtimeVersion && typeof supplied === "string" && supplied.length === this.token.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(this.token));
+          const valid = request.method === "hello" && request.args?.version === runtimeVersion && typeof supplied === "string" && /^[a-f0-9]{64}$/.test(supplied) && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(this.token));
           if (!valid) { this.write(socket, { id: request.id, error: "Terminal host authentication/protocol mismatch" }); socket.end(); return; }
           clearTimeout(authTimer); this.authorized.add(socket);
           this.write(socket, { id: request.id, result: { version: runtimeVersion } });
@@ -100,6 +100,15 @@ export class TerminalHost {
 
   private async dispatch(method: string, args: any): Promise<unknown> {
     if (this.closing) throw new Error("Terminal host stopping");
+    if (method === "configure") {
+      validateRuntimePolicy(args);
+      this.settings.log = { ...args.log };
+      this.settings.temporaryConsoles = { ...args.temporaryConsoles };
+      clearInterval(this.cleanup);
+      this.cleanup = setInterval(() => this.sweep(), this.settings.temporaryConsoles.cleanupIntervalMs);
+      this.cleanup.unref();
+      return true;
+    }
     if (method === "list") {
       const offset = Number.isInteger(args?.offset) && args.offset >= 0 ? args.offset : 0;
       return [...this.runs.values()].filter(run => !run.retired).slice(offset, offset + 16).map(run => run.state);
@@ -165,6 +174,7 @@ export class TerminalHost {
       this.logs.append(args.consoleId, data);
       mirror.write(data, () => {
         const sequence = ++run.state.sequence;
+        this.logs.flush(args.consoleId);
         this.broadcast({ event: "output", consoleId: args.consoleId, runId: args.runId, sequence, data, at: run.state.lastOutputAt! });
       });
     };
@@ -184,7 +194,10 @@ export class TerminalHost {
   }
 
   private snapshot(run: OwnedRun): Promise<TerminalScreen> {
-    return new Promise(resolve => run.mirror.write("", () => resolve({ output: run.serializer.serialize({ scrollback: 0 }), cols: run.mirror.cols, rows: run.mirror.rows, runId: run.state.runId, sequence: run.state.sequence })));
+    return new Promise((resolve, reject) => run.mirror.write("", () => {
+      try { resolve({ output: run.serializer.serialize({ scrollback: 0 }), cols: run.mirror.cols, rows: run.mirror.rows, runId: run.state.runId, sequence: run.state.sequence }); }
+      catch (error) { reject(error); }
+    }));
   }
 
   private async stopRun(run: OwnedRun): Promise<void> {
@@ -198,7 +211,10 @@ export class TerminalHost {
     const ttl = this.settings.temporaryConsoles.ttlHours * 3600_000;
     for (const run of this.runs.values()) {
       const last = Math.max(...[run.state.startedAt, run.state.lastAccessedAt, run.state.lastInputAt, run.state.lastOutputAt].map(value => Date.parse(value ?? "") || 0));
-      if (!run.retired && run.state.definition.persistent === false && ttl > 0 && Date.now() - last > ttl) void this.stopRun(run).then(() => { run.retired = true; }).catch(error => console.error(error));
+      if (!run.retired && !run.state.expired && run.state.definition.persistent === false && ttl > 0 && Date.now() - last > ttl) {
+        run.state.expired = true;
+        void this.stopRun(run).then(() => { run.retired = true; this.broadcast({ event: "state", run: run.state }); }).catch(error => console.error(error));
+      }
     }
     const inactive = [...this.runs.entries()].filter(([, run]) => run.retired || run.state.status === "exited");
     for (const [id, run] of inactive.slice(0, Math.max(0, this.runs.size - 1024))) { run.mirror.dispose(); this.runs.delete(id); }
