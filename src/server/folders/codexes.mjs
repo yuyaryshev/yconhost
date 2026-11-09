@@ -37,7 +37,8 @@ export function createCodexFolder(config) {
     const temporary = `${config.contextsPath}.${crypto.randomUUID()}.tmp`;
     try {
       if (read() !== before) throw new Error("Source changed externally; retry the operation");
-      fs.writeFileSync(temporary, after, "utf8");
+      const out = fs.openSync(temporary, "wx");
+      try { fs.writeFileSync(out, after, "utf8"); fs.fsyncSync(out); } finally { fs.closeSync(out); }
       fs.renameSync(temporary, config.contextsPath);
     } finally {
       fs.closeSync(fd);
@@ -99,7 +100,7 @@ export function createCodexFolder(config) {
       const idChanged = (values.session_id ?? "") !== item.session_id;
       if (nameChanged && idChanged) throw new Error("Change name or session_id separately, not both at once");
       if (all(before).some((other) => other._revision !== item._revision && (other.name === values.name.trim() || values.session_id && other.session_id === values.session_id))) throw new Error("A console with this name or session_id already exists");
-      let raw = item.raw ?? render(item, item.command);
+      let raw = item.raw ?? render(item, item.command, false);
       raw = raw.replace(/^#\s+[^\r\n]+/, () => `# ${values.name.trim()}`);
       raw = metadata(raw, "Color", values.background || "");
       raw = metadata(raw, "Description", JSON.stringify(values.description ?? ""));
@@ -112,7 +113,7 @@ export function createCodexFolder(config) {
     delete: (_context, original) => {
       const before = read();
       const item = locate(before, original);
-      const raw = (item.raw ?? render(item, item.command)).replace(/^#\s+/, "# DELETED ");
+      const raw = (item.raw ?? render(item, item.command, false)).replace(/^#\s+/, "# DELETED ");
       save(before, item.raw !== undefined ? before.slice(0, item.start) + raw + before.slice(item.end) : `${before}\n${raw}`);
     }
   };
@@ -153,7 +154,7 @@ export function parseSections(text, defaultCwd = process.cwd()) {
       if (!sectionBlocks.some((block) => lineOffset >= block.start && lineOffset < block.end)) {
         const color = line.match(/^Color:\s*`?([^`\r\n]+)`?\s*$/)?.[1];
         if (color) background = color.trim();
-        const desc = line.match(/^Description:\s*(.*)$/)?.[1];
+        const desc = line.match(/^Description:[ \t]*([^\r\n]*)/)?.[1];
         if (desc !== undefined) { try { description = JSON.parse(desc); } catch { description = desc; } }
       }
       lineOffset += line.length;
@@ -213,8 +214,8 @@ function editLaunch(raw, values, original, idChanged) {
   return lines.join("");
 }
 
-function render(values, command) {
-  return setPinnedText(`# ${values.name.trim()}\nColor: ${values.background ?? ""}\nDescription: ${JSON.stringify(values.description ?? "")}\n\n\`\`\`cmd\n${values.cwd ? `cd /d "${values.cwd}"\n` : ""}${command}\n\`\`\`\n`, values.pinned_text ?? defaultPinnedText);
+function render(values, command, includeDirectory = true) {
+  return setPinnedText(`# ${values.name.trim()}\nColor: ${values.background ?? ""}\nDescription: ${JSON.stringify(values.description ?? "")}\n\n\`\`\`cmd\n${includeDirectory && values.cwd ? `cd /d "${values.cwd}"\n` : ""}${command}\n\`\`\`\n`, values.pinned_text ?? defaultPinnedText);
 }
 
 function fencedBlocks(text) {

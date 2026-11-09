@@ -113,4 +113,32 @@ describe("agent context import", () => {
     expect(variables).toEqual({ work_dir: dir, project_dir: path.resolve("D:\\My Project"), agents_dir: path.resolve("D:\\My Project"), session_id: "session" });
     expect(source.getVariables({}, { cwd: dir, command: "ycodex" }).session_id).toBe("");
   });
+
+  it.each(["\n", "\r\n"])("preserves descriptions and metadata-like pinned lines with %j newlines", (newline) => {
+    fs.writeFileSync(contextsPath, ['# Agent', 'Description: "Keep this"', '```cmd', 'ycodex resume id', '```', '```pinned_text', 'Description: "Not metadata"', 'Color: STD_RED', '```', ''].join(newline));
+    const section = parseSections(fs.readFileSync(contextsPath, "utf8"), dir)[0];
+    expect(section.description).toBe("Keep this");
+    expect(section.background).toBe("");
+    expect(section.pinned_text).toBe('Description: "Not metadata"\nColor: STD_RED');
+  });
+
+  it("rejects duplicate and unterminated pinned blocks before publishing a changed list", () => {
+    expect(() => parseSections('# Agent\n```cmd\nycodex\n```\n```pinned_text\none\n```\n```pinned_text\ntwo\n```\n')).toThrow("Invalid pinned_text");
+    expect(() => parseSections('# Agent\n```cmd\nycodex\n```\n```pinned_text\nnot closed\n')).toThrow("Invalid pinned_text");
+  });
+
+  it.each(['cd /d "D:\\work" && ycodex --bypass-safety-y resume builtin', 'ycodex --bypass-safety-y resume builtin', 'claude --resume builtin'])("preserves Lua preset launches when saving pinned text: %s", (command) => {
+    const presets = path.join(dir, "presets.lua");
+    fs.writeFileSync(contextsPath, "preamble\n");
+    fs.writeFileSync(presets, `local built_in_presets = {\n{ id = 'one', name = 'Builtin', background = '#003200', command = '${command.replace(/\\/g, "\\\\")}' }\n}\n`);
+    const source = createCodexFolder({ contextsPath, weztermPresetsPath: presets, defaultCwd: dir });
+    const before = source.list()[0];
+    source.update({}, before.values, { ...before.values, pinned_text: "{{session_id}}" });
+    const after = source.list()[0];
+    expect(source.list()).toHaveLength(1);
+    expect(after.command).toBe(before.command);
+    expect(after.cwd).toBe(before.cwd);
+    expect(after.pinned_text).toBe("{{session_id}}");
+    expect(fs.readFileSync(presets, "utf8")).not.toContain("pinned_text");
+  });
 });
