@@ -52,7 +52,7 @@ export function ColorField({ name, label, value, theme, onChange }: { name: stri
   </div>;
 }
 
-export function FolderEntryDialog({ dialog, project, id, operation = "create", theme, onSaved }: { dialog: DialogStore; project: string; id?: string; operation?: "create" | "new"; theme: Theme; onSaved: () => Promise<void> }) {
+export function FolderEntryDialog({ dialog, project, id, operation = "create", theme, onSaved }: { dialog: DialogStore; project: string; id?: string; operation?: "create" | "new"; theme: Theme; onSaved: (createdId?: string) => Promise<void> }) {
   const [fields, setFields] = useState<FolderField[]>([]);
   const [original, setOriginal] = useState<Record<string, string>>({});
   const [values, setValues] = useState<Record<string, string>>({});
@@ -72,13 +72,13 @@ export function FolderEntryDialog({ dialog, project, id, operation = "create", t
   async function save() {
     setSaving(true); setError("");
     try {
-      await requestJson(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/${operation === "new" ? "new" : "entries"}`, id ? "PUT" : "POST", { values, revision });
+      const result = await requestJson<Array<{ id: string; name: string }>>(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/${operation === "new" ? "new" : "entries"}`, id ? "PUT" : "POST", { values, revision });
       dialog.hide();
-      await onSaved();
+      await onSaved(operation === "new" ? result.find((item) => item.name === values.name?.trim())?.id : undefined);
     } catch (reason) { setValues(original); setError((reason as Error).message); }
     finally { setSaving(false); }
   }
-  return <Dialog store={dialog} className="dialog preferences-dialog folder-dialog" backdrop={<div className="backdrop" />}>
+  return <Dialog store={dialog} hideOnEscape={!saving} hideOnInteractOutside={!saving} className="dialog preferences-dialog folder-dialog" backdrop={<div className="backdrop" />}>
     <DialogHeading className="dialog-title">{id ? "Console settings" : operation === "new" ? "New console" : "Add console"}</DialogHeading>
     <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <fieldset disabled={loading || saving} className="settings-grid fields-grid">

@@ -605,7 +605,13 @@ function App() {
           }}
         />
       ) : null}
-      {entryTarget ? <FolderEntryDialog key={entryTarget.version} dialog={entryDialog} project={entryTarget.project} id={entryTarget.id} operation={entryTarget.operation} theme={theme} onSaved={refresh} /> : null}
+      {entryTarget ? <FolderEntryDialog key={entryTarget.version} dialog={entryDialog} project={entryTarget.project} id={entryTarget.id} operation={entryTarget.operation} theme={theme} onSaved={async (createdId) => {
+        await refresh();
+        if (createdId) {
+          setSelectedId(createdId);
+          setCollapsedProjects((current) => { const next = new Set(current); next.delete(entryTarget.project); return next; });
+        }
+      }} /> : null}
       {folderSettingsTarget ? <FolderSettingsDialog key={folderSettingsTarget.version} dialog={folderSettingsDialog} project={folderSettingsTarget.project} onSaved={refresh} /> : null}
     </main>
   );
