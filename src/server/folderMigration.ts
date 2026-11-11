@@ -11,7 +11,9 @@ export async function migrateBuiltinFolders(folders: FolderService, settings: Ap
   if (fs.existsSync(existingScript)) {
     const text = fs.readFileSync(existingScript, "utf8");
     if (text.includes("import { createCodexFolder }") && text.includes("const source = createCodexFolder(config);")) {
-      const upgraded = text.replace("export const { list, defineFields, create, update } = source;", "export const { list, defineFields, create, update, getVariables } = source;");
+      const modern = "export const { list, defineFields, create, update, getVariables } = source;";
+      let upgraded = text.replace("export const { list, defineFields, create, update } = source;", modern);
+      if (!upgraded.includes("export { newEntry as new }")) upgraded = upgraded.replace(modern, `${modern}\nconst newEntry = source.new;\nexport { newEntry as new };`);
       if (upgraded !== text) fs.writeFileSync(existingScript, upgraded, "utf8");
     }
   }
@@ -21,7 +23,7 @@ export async function migrateBuiltinFolders(folders: FolderService, settings: Ap
   const codexLibrary = new URL("./folders/codexes.mjs", import.meta.url).href;
   const codexScript = path.join(directory, "codexes.mjs");
   if (!fs.existsSync(codexScript)) fs.writeFileSync(codexScript,
-    `import { createCodexFolder } from ${JSON.stringify(codexLibrary)};\nconst config = ${JSON.stringify({ ...settings.codexContexts, defaultCwd: process.cwd() }, null, 2)};\nconst source = createCodexFolder(config);\nexport const { list, defineFields, create, update, getVariables } = source;\nconst remove = source.delete;\nexport { remove as delete };\n`, "utf8");
+    `import { createCodexFolder } from ${JSON.stringify(codexLibrary)};\nconst config = ${JSON.stringify({ ...settings.codexContexts, defaultCwd: process.cwd() }, null, 2)};\nconst source = createCodexFolder(config);\nexport const { list, defineFields, create, update, getVariables } = source;\nconst newEntry = source.new;\nexport { newEntry as new };\nconst remove = source.delete;\nexport { remove as delete };\n`, "utf8");
   const pm2Script = path.join(directory, "pm2.mjs");
   if (!fs.existsSync(pm2Script)) fs.writeFileSync(pm2Script, `export { list, readOutput } from ${JSON.stringify(new URL("./folders/pm2.mjs", import.meta.url).href)};\n`, "utf8");
   // Register missing sources even if the file is unavailable; startup list reports the error without deleting slots.

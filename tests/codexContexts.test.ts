@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDefaultPinnedTextBlocks, createCodexFolder, defaultPinnedText, parseSections } from "../src/server/folders/codexes.mjs";
 
 describe("agent context import", () => {
@@ -21,6 +21,50 @@ describe("agent context import", () => {
     ).join("\n"));
     return createCodexFolder({ contextsPath, defaultCwd: dir }).list();
   }
+
+  it("creates a real new session through the adapter, writes a resume template, and lists an idle slot", async () => {
+    fs.writeFileSync(contextsPath, "# Notes\nKeep this\n");
+    const cwd = path.join(dir, "folder & spaces");
+    fs.mkdirSync(cwd);
+    const sessionId = "01234567-1234-7123-8123-0123456789ab";
+    const createSession = vi.fn(async () => sessionId);
+    const source = createCodexFolder({ contextsPath, defaultCwd: dir }, { createSession });
+    expect(source.defineFields({}, { operation: "new" }).map((field: { name: string }) => field.name)).toEqual(["name", "cwd"]);
+    expect(source.defineFields({})[4].required).not.toBe(true);
+    await expect(source.new({ env: { CUSTOM: "yes" } }, { name: "New agent", cwd })).resolves.toEqual({ key: sessionId });
+    expect(createSession).toHaveBeenCalledWith({ name: "New agent", cwd, env: { CUSTOM: "yes" } });
+    expect(fs.readFileSync(contextsPath, "utf8")).toContain(`cd /d "${cwd}" && title New agent && codex resume ${sessionId} --dangerously-bypass-approvals-and-sandbox --bypass-safety-y`);
+    expect(source.list()).toEqual([expect.objectContaining({ key: sessionId, name: "New agent", cwd, noRun: true, pinned_text: defaultPinnedText,
+      command: `cd /d "${cwd}" && title New agent && ycodex resume ${sessionId} --dangerously-bypass-approvals-and-sandbox --bypass-safety-y` })]);
+    const original = source.list()[0].values;
+    source.update({}, original, { ...original, cwd: dir });
+    expect(source.list()[0].cwd).toBe(dir);
+    expect(source.list()[0].command).not.toContain("folder & spaces");
+  });
+
+  it("validates new entries before allocating sessions and preserves Markdown on bootstrap failure", async () => {
+    const before = "# Existing\n```cmd\nycodex resume existing\n```\n";
+    fs.writeFileSync(contextsPath, before);
+    const createSession = vi.fn(async () => { throw new Error("bootstrap failed"); });
+    const source = createCodexFolder({ contextsPath, defaultCwd: dir }, { createSession });
+    for (const values of [{ name: "Existing", cwd: dir }, { name: "Bad & injected", cwd: dir }, { name: "Bad", cwd: "relative" }, { name: "Bad", cwd: "" }]) {
+      await expect(source.new({}, values)).rejects.toThrow();
+    }
+    expect(createSession).not.toHaveBeenCalled();
+    await expect(source.new({}, { name: "New", cwd: dir })).rejects.toThrow("bootstrap failed");
+    expect(fs.readFileSync(contextsPath, "utf8")).toBe(before);
+  });
+
+  it("does not overwrite concurrent Markdown edits during new and reports the allocated ID for recovery", async () => {
+    fs.writeFileSync(contextsPath, "");
+    const id = "01234567-1234-7123-8123-0123456789ab";
+    const source = createCodexFolder({ contextsPath, defaultCwd: dir }, { createSession: async () => {
+      fs.appendFileSync(contextsPath, "# External note\n"); return id;
+    } });
+    await expect(source.new({}, { name: "New", cwd: dir })).rejects.toThrow(`Codex session ${id} was created`);
+    expect(fs.readFileSync(contextsPath, "utf8")).toBe("# External note\n");
+    expect(fs.existsSync(`${contextsPath}.yconhost-lock`)).toBe(false);
+  });
 
   it("preserves the first Claude launch command, resume ID, cwd and color as an idle persistent slot", () => {
     const cwd = path.join(dir, "microservices");

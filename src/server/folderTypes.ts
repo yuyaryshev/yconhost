@@ -10,6 +10,7 @@ export interface FolderField {
 }
 
 export interface FolderCapabilities {
+  new: boolean;
   create: boolean;
   update: boolean;
   delete: boolean;

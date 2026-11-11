@@ -208,6 +208,44 @@ describe("Generic folders", () => {
     await request(app).get("/api/projects/custom/settings").expect(200);
   });
 
+  it("exposes generic new capability, operation-specific fields, HTTP and MCP without invoking create", async () => {
+    await source("fresh", `
+      const items = [];
+      export function list() { return items; }
+      export function defineFields(_context, { operation }) {
+        return operation === 'new' ? [{ name: 'token', label: 'Resource', type: 'string', required: true }] : [{ name: 'name', label: 'Name', type: 'string' }];
+      }
+      async function allocate(_context, values) {
+        if (values.token === 'fail') throw new Error('allocation failed');
+        items.push({ key: values.token, name: values.token, command: 'echo new' });
+      }
+      export { allocate as new };
+      export function create() { throw new Error('must not call create'); }
+    `);
+    expect(folders.get("fresh").capabilities.new).toBe(true);
+    const form = await request(app).get("/api/projects/fresh/fields?operation=new").expect(200);
+    expect(form.body.fields.map((field: { name: string }) => field.name)).toEqual(["token"]);
+    await request(app).post("/api/projects/fresh/new").send({ values: {} }).expect(400);
+    await request(app).post("/api/projects/fresh/new").send({ values: { token: "fail" } }).expect(400);
+    expect(manager.list("fresh")).toHaveLength(0);
+    await request(app).post("/api/projects/fresh/new").send({ values: { token: "HTTP" } }).expect(200);
+    const call = (name: string, args: object) => request(app).post("/mcp").send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }).expect(200);
+    const mcpForm = await call("get_folder_fields", { project: "fresh", operation: "new" });
+    expect(JSON.parse(mcpForm.body.result.content[0].text).fields).toEqual(form.body.fields);
+    const result = await call("new_folder_entry", { project: "fresh", values: { token: "MCP" } });
+    expect(result.body.result.isError).not.toBe(true);
+    expect(manager.list("fresh").map((item) => item.name)).toEqual(["HTTP", "MCP"]);
+    expect(factory.sessions).toHaveLength(0);
+    await source("unsupported");
+    await request(app).get("/api/projects/unsupported/fields?operation=new").expect(400);
+    await request(app).post("/api/projects/unsupported/new").send({ values: { name: "No" } }).expect(400);
+    await request(app).get("/api/projects/fresh/fields?operation=invalid").expect(400);
+    await folders.configure({ name: "Manual", type: "manual" });
+    expect(folders.get("Manual").capabilities.new).toBe(false);
+    const refused = await call("new_folder_entry", { project: "Manual", values: { name: "No" } });
+    expect(refused.body.result.isError).toBe(true);
+  });
+
   it("rejects stale form revisions even after a periodic list has adopted the external edit", async () => {
     const { dataFile } = await source();
     const record = manager.list("custom")[0];
@@ -433,7 +471,9 @@ describe("Generic folders", () => {
     await migrateBuiltinFolders(folders, settings);
     const wrapper = path.join(dir, "folder-scripts", "codexes.mjs");
     const generated = fs.readFileSync(wrapper, "utf8");
-    fs.writeFileSync(wrapper, generated.replace("create, update, getVariables", "create, update"));
+    fs.writeFileSync(wrapper, generated.replace("create, update, getVariables", "create, update").replace("const newEntry = source.new;\nexport { newEntry as new };\n", ""));
+    await migrateBuiltinFolders(folders, settings);
+    expect(fs.readFileSync(wrapper, "utf8")).toBe(generated);
     await migrateBuiltinFolders(folders, settings);
     expect(fs.readFileSync(wrapper, "utf8")).toBe(generated);
     fs.writeFileSync(wrapper, "// custom wrapper\nexport function list() { return []; }\n");

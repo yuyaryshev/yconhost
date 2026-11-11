@@ -34,9 +34,10 @@ export class FolderRunner {
     this.worker.ref();
     return new Promise<Result<T>>((resolve, reject) => {
       const id = ++this.serial;
+      const timeout = method === "new" ? Math.max(this.timeoutMs, 60_000) : this.timeoutMs;
       const timer = setTimeout(() => {
-        this.dispose(new Error(`Folder script ${method} timed out after ${this.timeoutMs} ms`));
-      }, this.timeoutMs);
+        this.dispose(new Error(`Folder script ${method} timed out after ${timeout} ms`));
+      }, timeout);
       this.pending.set(id, { resolve: resolve as (value: Result<unknown>) => void, reject, timer });
       this.worker!.postMessage({ id, method, args });
     });

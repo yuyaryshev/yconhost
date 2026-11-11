@@ -7,10 +7,11 @@ import type { ConsoleManager } from "./consoleManager.js";
 import { FolderRunner } from "./folderRunner.js";
 import { defaultFolderFields, type FolderCapabilities, type FolderConfig, type FolderField, type FolderInfo, type FolderItem } from "./folderTypes.js";
 import { ProjectStore } from "./projectStore.js";
+import { buildTerminalEnv } from "./terminal.js";
 import type { BatchWinConfig, ConsoleRecord, ManagedProject, MywinsEntry } from "./types.js";
 
-const editable: FolderCapabilities = { create: true, update: true, delete: true, readOutput: false };
-const noCapabilities: FolderCapabilities = { create: false, update: false, delete: false, readOutput: false };
+const editable: FolderCapabilities = { new: false, create: true, update: true, delete: true, readOutput: false };
+const noCapabilities: FolderCapabilities = { new: false, create: false, update: false, delete: false, readOutput: false };
 const manualFields: FolderField[] = [...defaultFolderFields,
   { name: "pinned_text", label: "pinned_text", type: "string", multiline: true },
   { name: "command", label: "Command", type: "string" }, { name: "cwd", label: "Working directory", type: "string" },
@@ -126,21 +127,33 @@ export class FolderService {
     });
   }
 
-  async entry(project: string, id?: string): Promise<{ folder: FolderInfo; fields: FolderField[]; values: Record<string, string>; revision?: string }> {
+  async entry(project: string, id?: string, operation: "create" | "new" = "create"): Promise<{ folder: FolderInfo; fields: FolderField[]; values: Record<string, string>; revision?: string }> {
+    if (!["create", "new"].includes(operation) || id && operation === "new") throw new Error("Invalid entry operation");
     const state = this.require(project);
     return this.locked(state, async () => {
       const record = id ? this.record(id) : undefined;
       if (record && record.project.toLowerCase() !== state.info.name.toLowerCase()) throw new Error("Console belongs to another folder");
       let fields: FolderField[];
       if (state.info.type === "scripted") {
-        const result = await this.runner(state).call<FolderField[] | null>("defineFields", this.context(state.info));
+        const result = await this.runner(state).call<FolderField[] | null>("defineFields", this.context(state.info), { operation: id ? "update" : operation });
         state.info.capabilities = result.capabilities;
         fields = this.validateFields(result.result ?? defaultFolderFields);
       } else fields = state.info.type === "manual" ? manualFields : mywinsFields;
+      if (operation === "new" && !state.info.capabilities.new) throw new Error("Folder does not support new");
       const values = record ? { ...record.sourceValues, name: record.name, description: record.description ?? "", cwd: record.cwd,
         background: record.background ?? "", command: record.command, pinned_text: record.pinned_text ?? "", ...record.sourceValues } :
         Object.fromEntries(fields.map((field) => [field.name, field.defaultValue ?? ""]));
       return { folder: state.info, fields, values, revision: record ? this.revision(record) : undefined };
+    });
+  }
+
+  async newEntry(project: string, values: Record<string, string>): Promise<ConsoleRecord[]> {
+    const state = this.require(project);
+    return this.locked(state, async () => {
+      await this.validateValues(state, values, "new");
+      if (state.info.type !== "scripted" || !state.info.capabilities.new) throw new Error("Folder does not support new");
+      await this.runner(state).call("new", { ...this.context(state.info), env: buildTerminalEnv(process.env) }, values);
+      return this.applyList(state);
     });
   }
 
@@ -162,7 +175,7 @@ export class FolderService {
       const record = this.record(id);
       if (record.readonly || record.orphaned) throw new Error("Console source is readonly or orphaned");
       if (revision && revision !== this.revision(record)) throw new Error("Source changed externally; reopen the dialog");
-      await this.validateValues(state, values);
+      await this.validateValues(state, values, "update");
       if (!state.info.capabilities.update) throw new Error("Folder does not support update");
       let remap: { id: string; key: string } | undefined;
       if (state.info.type === "scripted") {
@@ -379,10 +392,10 @@ export class FolderService {
     return value;
   }
 
-  private async validateValues(state: State, values: Record<string, string>): Promise<void> {
+  private async validateValues(state: State, values: Record<string, string>, operation: "create" | "update" | "new" = "create"): Promise<void> {
     if (!values || typeof values !== "object" || Array.isArray(values) || Object.values(values).some((value) => typeof value !== "string")) throw new Error("Field values must be strings");
     if (values.pinned_text && values.pinned_text.length > 65536) throw new Error("pinned_text exceeds 64 KiB");
-    const fields = state.info.type === "scripted" ? await this.runner(state).call<FolderField[] | null>("defineFields", this.context(state.info)).then((result) => {
+    const fields = state.info.type === "scripted" ? await this.runner(state).call<FolderField[] | null>("defineFields", this.context(state.info), { operation }).then((result) => {
       state.info.capabilities = result.capabilities;
       return this.validateFields(result.result ?? defaultFolderFields);
     }) : state.info.type === "manual" ? manualFields : mywinsFields;

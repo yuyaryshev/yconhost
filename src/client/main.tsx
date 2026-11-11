@@ -127,7 +127,7 @@ function App() {
   const preferencesDialog = useDialogStore();
   const entryDialog = useDialogStore();
   const folderSettingsDialog = useDialogStore();
-  const [entryTarget, setEntryTarget] = useState<{ project: string; id?: string; version: number }>();
+  const [entryTarget, setEntryTarget] = useState<{ project: string; id?: string; operation?: "create" | "new"; version: number }>();
   const [folderSettingsTarget, setFolderSettingsTarget] = useState<{ project?: string; version: number }>();
   const selected = consoles.find((item) => item.id === selectedId);
 
@@ -335,8 +335,8 @@ function App() {
     folderSettingsDialog.show();
   }
 
-  function openAddEntry(project: string) {
-    setEntryTarget({ project, version: Date.now() });
+  function openAddEntry(project: string, operation: "create" | "new" = "create") {
+    setEntryTarget({ project, operation, version: Date.now() });
     entryDialog.show();
   }
 
@@ -481,6 +481,7 @@ function App() {
                     readonly={group.consoles.length > 0 && group.consoles.every((item) => item.readonly) || Boolean(projectInfos.find((item) => item.name === group.project)?.capabilities?.readOutput && projectInfos.find((item) => item.name === group.project)?.capabilities?.create === false)}
                     canReload={projectInfos.find((item) => item.name === group.project)?.type !== "manual"}
                     canCreate={projectInfos.find((item) => item.name === group.project)?.capabilities?.create !== false}
+                    canNew={projectInfos.find((item) => item.name === group.project)?.capabilities?.new === true}
                     error={projectInfos.find((item) => item.name === group.project)?.error}
                     onSettings={() => openFolderSettings(group.project)}
                     gatherErrors={projectInfos.find((item) => item.name === group.project)?.gatherErrors ?? true}
@@ -494,6 +495,7 @@ function App() {
                     onReload={() => runProjectAction(group.project, "reload")}
                     onMarkRead={() => runProjectAction(group.project, "read")}
                     onAddConsole={() => openAddEntry(group.project)}
+                    onNewConsole={() => openAddEntry(group.project, "new")}
                   />
                   {!collapsedProjects.has(group.project) ? (
                     <ProjectConsoleList consoles={group.consoles} selectedId={selectedId} theme={theme} onSelect={setSelectedId} onClose={closeConsole} onEditConfig={openEditEntry} onDeleteConfig={deleteEntry} />
@@ -603,7 +605,7 @@ function App() {
           }}
         />
       ) : null}
-      {entryTarget ? <FolderEntryDialog key={entryTarget.version} dialog={entryDialog} project={entryTarget.project} id={entryTarget.id} theme={theme} onSaved={refresh} /> : null}
+      {entryTarget ? <FolderEntryDialog key={entryTarget.version} dialog={entryDialog} project={entryTarget.project} id={entryTarget.id} operation={entryTarget.operation} theme={theme} onSaved={refresh} /> : null}
       {folderSettingsTarget ? <FolderSettingsDialog key={folderSettingsTarget.version} dialog={folderSettingsDialog} project={folderSettingsTarget.project} onSaved={refresh} /> : null}
     </main>
   );
@@ -697,6 +699,7 @@ function ProjectHeader({
   readonly,
   canReload,
   canCreate,
+  canNew,
   error,
   onSettings,
   gatherErrors,
@@ -709,13 +712,15 @@ function ProjectHeader({
   onStart,
   onReload,
   onMarkRead,
-  onAddConsole
+  onAddConsole,
+  onNewConsole
 }: {
   project: string;
   collapsed: boolean;
   readonly?: boolean;
   canReload?: boolean;
   canCreate?: boolean;
+  canNew?: boolean;
   error?: string;
   onSettings: () => void;
   gatherErrors: boolean;
@@ -729,6 +734,7 @@ function ProjectHeader({
   onReload: () => Promise<void>;
   onMarkRead: () => Promise<void>;
   onAddConsole: () => void;
+  onNewConsole: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -746,6 +752,7 @@ function ProjectHeader({
           <div className="dropdown-menu project-dropdown">
             <button onClick={() => { setOpen(false); onSettings(); }}>Settings...</button>
             {canReload ? <button onClick={() => { setOpen(false); void onReload(); }}>List source</button> : null}
+            {canNew ? <button onClick={() => { setOpen(false); onNewConsole(); }}>New...</button> : null}
             {!readonly ? <>
             <label className="gather-errors-control project-gather-errors">
               <input type="checkbox" checked={gatherErrors} onChange={(event) => void onGatherErrors(event.target.checked)} />

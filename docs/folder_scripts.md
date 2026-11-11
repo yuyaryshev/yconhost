@@ -1,5 +1,58 @@
 # Папки и серверные JS-источники
 
+## New: новая сессия Codex
+
+В меню папки `codexes` есть отдельный пункт `New...`: достаточно указать `Name`
+и существующий абсолютный `Working directory`. Старый `Add console...` остаётся
+для регистрации существующих контекстов, включая известный `session_id`.
+
+New запускает короткоживущий скрытый `ycodex app-server` с тем же окружением,
+что и терминалы (включая актуальный Windows PATH и YCODEX_HOME). Через
+`thread/start`, `thread/archive`, `thread/unarchive`, `thread/name/set` и
+`thread/read` создаётся и проверяется настоящая сохранённая пустая сессия.
+Запрос к модели (`turn/start`) не отправляется. Никаких самодельных rollout-файлов.
+После операции вспомогательный процесс и его дочерние процессы завершаются.
+В Markdown добавляется новый раздел с обычным `pinned_text` и командой:
+
+```cmd
+cd /d "TAB_FOLDER" && title TAB_NAME && codex resume SESSION_ID --dangerously-bypass-approvals-and-sandbox --bypass-safety-y
+```
+
+При чтении источника `codex` нормализуется в `ycodex`, как у существующих записей.
+Это сохраняет совместимость с локальным форком и его home. Консоль остаётся
+idle: TUI запускается только по `Start`. Флаги отключения ограничений добавляются
+по явно заданному пользователем шаблону. Имя не допускает cmd-метасимволы
+`& | < > % " ! ^`, путь — кавычки, переводы строк и `% ! ^`; пробелы и `&` в
+пути поддерживаются. Дубликаты, в том числе DELETED-разделы с тем же именем,
+проверяются до создания сессии. Если Markdown изменился во время подготовки,
+чужие изменения не затираются; ошибка возвращает уже выделенный session ID
+для ручного восстановления через Add console.
+
+На уровне платформы это необязательная возможность любой scripted-папки:
+
+```js
+export function defineFields(context, { operation } = {}) {
+  // operation: create, update или new. Старые одноаргументные функции совместимы.
+  return operation === "new"
+    ? [{ name: "name", label: "Name", type: "string", required: true }]
+    : [{ name: "name", label: "Name", type: "string" }];
+}
+async function newEntry(context, values) { /* allocate resource and write source */ }
+export { newEntry as new };
+```
+
+Экспорт `new` включает `capabilities.new` и пункт `New...`; наличие `create`
+для этого не требуется. После успеха вызывается `list`, процессы слотов не
+запускаются. У New лимит worker 60 секунд (обычные операции — 10 секунд),
+у подготовки Codex — 25 секунд плюс завершение процесса.
+
+HTTP: `GET /api/projects/:project/fields?operation=new`, затем
+`POST /api/projects/:project/new` с `{ "values": { "name": "...", "cwd": "..." } }`.
+MCP: `get_folder_fields(project, operation="new")`, затем
+`new_folder_entry(project, values)`. В manual/my_wins New не поддерживается;
+существующий create/API не меняет семантику. Сгенерированный codexes-wrapper
+обновляется при старте, пользовательские JS не переписываются.
+
 ## Ошибки источников и MCP
 
 Ошибка `list` отображается текстом под заголовком папки, в том числе когда папка

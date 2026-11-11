@@ -52,7 +52,7 @@ export function ColorField({ name, label, value, theme, onChange }: { name: stri
   </div>;
 }
 
-export function FolderEntryDialog({ dialog, project, id, theme, onSaved }: { dialog: DialogStore; project: string; id?: string; theme: Theme; onSaved: () => Promise<void> }) {
+export function FolderEntryDialog({ dialog, project, id, operation = "create", theme, onSaved }: { dialog: DialogStore; project: string; id?: string; operation?: "create" | "new"; theme: Theme; onSaved: () => Promise<void> }) {
   const [fields, setFields] = useState<FolderField[]>([]);
   const [original, setOriginal] = useState<Record<string, string>>({});
   const [values, setValues] = useState<Record<string, string>>({});
@@ -63,23 +63,23 @@ export function FolderEntryDialog({ dialog, project, id, theme, onSaved }: { dia
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     let disposed = false;
-    requestJson<{ fields: FolderField[]; values: Record<string, string>; revision?: string; folder: FolderInfo }>(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/fields`)
+    requestJson<{ fields: FolderField[]; values: Record<string, string>; revision?: string; folder: FolderInfo }>(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/fields?operation=${operation}`)
       .then((form) => { if (!disposed) { setFields(form.fields); setOriginal(form.values); setValues(form.values); setRevision(form.revision); setFolderType(form.folder.type); } })
       .catch((reason: Error) => { if (!disposed) setError(reason.message); })
       .finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
-  }, [project, id]);
+  }, [project, id, operation]);
   async function save() {
     setSaving(true); setError("");
     try {
-      await requestJson(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/entries`, id ? "PUT" : "POST", { values, revision });
+      await requestJson(id ? `/api/consoles/${id}/entry` : `/api/projects/${encodeURIComponent(project)}/${operation === "new" ? "new" : "entries"}`, id ? "PUT" : "POST", { values, revision });
       dialog.hide();
       await onSaved();
     } catch (reason) { setValues(original); setError((reason as Error).message); }
     finally { setSaving(false); }
   }
   return <Dialog store={dialog} className="dialog preferences-dialog folder-dialog" backdrop={<div className="backdrop" />}>
-    <DialogHeading className="dialog-title">{id ? "Console settings" : "Add console"}</DialogHeading>
+    <DialogHeading className="dialog-title">{id ? "Console settings" : operation === "new" ? "New console" : "Add console"}</DialogHeading>
     <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <fieldset disabled={loading || saving} className="settings-grid fields-grid">
         {fields.map((field) => field.type === "color" ? <ColorField key={field.name} name={field.name} label={field.label} theme={theme} value={values[field.name] ?? ""} onChange={(value) => { setError(""); setValues((current) => ({ ...current, [field.name]: value })); }} /> :
@@ -88,7 +88,7 @@ export function FolderEntryDialog({ dialog, project, id, theme, onSaved }: { dia
           <label key={field.name}>{field.label}<input name={field.name} required={field.required} value={values[field.name] ?? ""} onChange={(event) => { setError(""); setValues((current) => ({ ...current, [field.name]: event.target.value })); }} /></label>)}
       </fieldset>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
-      <div className="dialog-actions"><DialogDismiss type="button" className="secondary-button" disabled={saving}>Cancel</DialogDismiss><Button type="submit" className="primary-button" disabled={loading || saving}>{saving ? "Saving..." : "Save"}</Button></div>
+      <div className="dialog-actions"><DialogDismiss type="button" className="secondary-button" disabled={saving}>Cancel</DialogDismiss><Button type="submit" className="primary-button" disabled={loading || saving}>{saving ? "Saving..." : operation === "new" ? "Create" : "Save"}</Button></div>
     </form>
   </Dialog>;
 }

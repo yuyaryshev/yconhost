@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { createCodexSession } from "./codexSession.mjs";
 
 export const defaultPinnedText = 'Work dir: "{{work_dir}}"\nProject dir: "{{project_dir}}"\nSession ID: {{session_id}}';
 
-export function createCodexFolder(config) {
+export function createCodexFolder(config, { createSession = createCodexSession } = {}) {
   const fields = [
     { name: "name", label: "Name", type: "string", required: true },
     { name: "description", label: "Description", type: "string" },
@@ -57,7 +58,28 @@ export function createCodexFolder(config) {
     }
   }
   return {
-    defineFields: () => fields,
+    defineFields: (_context, { operation } = {}) => operation === "new" ? [fields[0], { ...fields[4], required: true }] : fields,
+    new: async (context, values) => {
+      validate(values);
+      const name = values.name.trim();
+      const directory = values.cwd?.trim();
+      if (!directory || !path.isAbsolute(directory) || !fs.statSync(directory).isDirectory()) throw new Error("Working directory must be an existing absolute folder");
+      if (/[&|<>%"!^]/.test(name) || /[%!^]/.test(directory)) throw new Error("Name or working directory contains unsupported cmd.exe metacharacters");
+      const entry = { name, cwd: path.resolve(directory), pinned_text: defaultPinnedText, session_id: "" };
+      const before = read();
+      unique(before, entry);
+      if (sections(before).some((item) => item.name === name)) throw new Error("This name is present in Markdown, possibly DELETED; restore or rename that section first");
+      entry.session_id = await createSession({ cwd: entry.cwd, name, env: context.env });
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.session_id)) throw new Error("Codex returned an invalid session ID");
+      const command = `cd /d "${entry.cwd}" && title ${name} && codex resume ${entry.session_id} --dangerously-bypass-approvals-and-sandbox --bypass-safety-y`;
+      try {
+        unique(before, entry);
+        save(before, `${before}${before.endsWith("\n") ? "" : "\n"}\n${render(entry, command, false)}`);
+      } catch (error) {
+        throw new Error(`${error.message}. Codex session ${entry.session_id} was created, but its Markdown entry was not saved; add it with Add console using this ID.`);
+      }
+      return { key: entry.session_id };
+    },
     getVariables: (_context, entry) => {
       const workDir = path.resolve(entry.cwd || config.defaultCwd || process.cwd());
       const projectDir = extractCwd(entry.command ?? "", workDir);
@@ -203,7 +225,7 @@ function editLaunch(raw, values, original, idChanged) {
     }
     if ((values.cwd ?? "") !== original.cwd) {
       const directory = values.cwd ? `cd /d "${values.cwd}"` : "cd .";
-      const inline = /\bcd\s+\/d\s+(.+?)(?=\s*(?:&&|&|\r?$))/i;
+      const inline = /\bcd\s+\/d\s+("[^"]+"|[^&]+?)(?=\s*(?:&&|&|\r?$))/i;
       if (inline.test(next)) next = next.replace(inline, () => directory);
       else if (lastDirectory >= 0) lines[lastDirectory] = `${directory}${lines[lastDirectory].endsWith("\r\n") ? "\r\n" : "\n"}`;
       else if (values.cwd) next = `${directory} && ${next}`;
@@ -275,6 +297,6 @@ function normalizeAgentCommand(command) {
   return command.slice(0, start) + (command.toLowerCase().includes("--bypass-safety-y") ? "ycodex" : "ycodex --bypass-safety-y") + command.slice(start + match[1].length);
 }
 function extractCwd(command, fallback = process.cwd()) {
-  const raw = [...command.matchAll(/\bcd\s+\/d\s+(.+?)(?=\s*(?:&&|&|$))/gi)].at(-1)?.[1]?.trim();
+  const raw = [...command.matchAll(/\bcd\s+\/d\s+("[^"]+"|[^&]+?)(?=\s*(?:&&|&|$))/gi)].at(-1)?.[1]?.trim();
   return raw ? path.resolve(raw.replace(/^"(.+)"$/, "$1")) : fallback;
 }

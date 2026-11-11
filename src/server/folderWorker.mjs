@@ -2,7 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { pathToFileURL } from "node:url";
 
 const source = await import(pathToFileURL(workerData.scriptPath).href);
-const capabilities = Object.fromEntries(["create", "update", "delete", "readOutput"].map((name) => [name, typeof source[name] === "function"]));
+const capabilities = Object.fromEntries(["new", "create", "update", "delete", "readOutput"].map((name) => [name, typeof source[name] === "function"]));
 if (typeof source.list !== "function") throw new Error("Folder script must export list(context)");
 
 parentPort.on("message", async ({ id, method, args }) => {
