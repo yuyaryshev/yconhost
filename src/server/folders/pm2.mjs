@@ -24,6 +24,7 @@ export function parseProcessList(stdout) {
     const lastOutput = Math.max(0, ...files.map((file) => { try { return fs.statSync(file).mtimeMs; } catch { return 0; } }));
     return {
       key: String(item.pm_id ?? item.name), name: item.name ?? `pm2-${item.pm_id}`,
+      description: `PM2 ID: ${item.pm_id ?? "unknown"}`,
       command: [env.pm_exec_path, ...args].filter(Boolean).join(" "), cwd: env.pm_cwd ?? process.cwd(),
       readonly: true, ansiParserEnabled: false,
       values: { stdout: env.pm_out_log_path ?? "", stderr: env.pm_err_log_path ?? "" },

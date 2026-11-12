@@ -112,8 +112,6 @@ describe("Generic folders", () => {
     expect(folders.get("custom").error).toContain('"A" and "B"');
     const projects = await request(app).get("/api/projects").expect(200);
     expect(projects.body.projects.find((project: { name: string }) => project.name === "custom").error).toContain('"duplicate"');
-    fs.writeFileSync(dataFile, JSON.stringify([{ key: "a", name: "Same" }, { key: "b", name: "Same" }]));
-    await expect(folders.listFolder("custom")).rejects.toThrow('Duplicate folder entry name "Same"');
     fs.writeFileSync(scriptPath, "export function list() { while (true) {} }");
     await expect(folders.listFolder("custom", true)).rejects.toThrow("timed out");
     expect(manager.list("custom")[0].id).toBe(before);
@@ -125,6 +123,23 @@ describe("Generic folders", () => {
     fs.writeFileSync(scriptPath, "export function list() { return []; } export function defineFields() { return [{ name: 'background', label: 'Color', type: 'color', defaultValue: 42 }]; }");
     await folders.listFolder("custom", true);
     await expect(folders.entry("custom")).rejects.toThrow("Invalid defineFields");
+  });
+
+  it("scopes keys to a folder and leaves duplicate-name policy to each script", async () => {
+    const definitions = [{ key: "a", name: "yconhost", readonly: true }, { key: "b", name: "yconhost", readonly: true }];
+    const script = `export function list() { return ${JSON.stringify(definitions)}; } export function readOutput(_context, original) { return original.key; }`;
+    await source("processes", script);
+    await source("other-processes", script);
+    const records = manager.list("processes");
+    expect(records).toHaveLength(2);
+    expect(records.map((item) => item.name)).toEqual(["yconhost", "yconhost"]);
+    expect(new Set(manager.list().map((item) => item.id)).size).toBe(4);
+    expect(await folders.readOutput(records[0].id)).toBe("a");
+    expect(await folders.readOutput(records[1].id)).toBe("b");
+    await folders.listFolder("processes");
+    expect(manager.list("processes").map((item) => item.id)).toEqual(records.map((item) => item.id));
+    expect(folders.get("processes").error).toBeUndefined();
+    expect(factory.sessions).toHaveLength(0);
   });
 
   it("requires confirmation for recreation, validates before stopping, and keeps source files/logs", async () => {

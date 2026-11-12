@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { createCodexSession } from "./codexSession.mjs";
 
 export const defaultPinnedText = 'Work dir: "{{work_dir}}"\nProject dir: "{{project_dir}}"\nSession ID: {{session_id}}';
+const newCodexFlags = "--dangerously-bypass-approvals-and-sandbox --bypass-safety-y";
 
 export function createCodexFolder(config, { createSession = createCodexSession } = {}) {
   const fields = [
@@ -71,7 +72,7 @@ export function createCodexFolder(config, { createSession = createCodexSession }
       if (sections(before).some((item) => item.name === name)) throw new Error("This name is present in Markdown, possibly DELETED; restore or rename that section first");
       entry.session_id = await createSession({ cwd: entry.cwd, name, env: context.env });
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.session_id)) throw new Error("Codex returned an invalid session ID");
-      const command = `cd /d "${entry.cwd}" && title ${name} && codex resume ${entry.session_id} --dangerously-bypass-approvals-and-sandbox --bypass-safety-y`;
+      const command = `cd /d "${entry.cwd}" && title ${name} && codex resume ${entry.session_id} ${newCodexFlags}`;
       try {
         unique(before, entry);
         save(before, `${before}${before.endsWith("\n") ? "" : "\n"}\n${render(entry, command, false)}`);
@@ -110,7 +111,7 @@ export function createCodexFolder(config, { createSession = createCodexSession }
       const before = read();
       unique(before, values);
       if (sections(before).some((item) => item.name === values.name.trim())) throw new Error("This name is present in Markdown, possibly DELETED; restore or rename that section first");
-      const command = `ycodex --bypass-safety-y${values.session_id ? ` resume ${values.session_id}` : ""}`;
+      const command = `ycodex${values.session_id ? ` resume ${values.session_id}` : ""} ${newCodexFlags}`;
       save(before, `${before}${before.endsWith("\n") ? "" : "\n"}\n${render(values, command)}`);
       return { key: values.session_id || values.name.trim() };
     },

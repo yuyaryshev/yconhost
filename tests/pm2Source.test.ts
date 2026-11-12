@@ -20,3 +20,14 @@ it("reads bounded stdout/stderr tails, including missing logs", () => {
     expect(output.length).toBeLessThan(100);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+it("retains same-name processes with separate PM2 IDs and output files", () => {
+  const entries = parseProcessList(JSON.stringify([
+    { pm_id: 1, name: "yconhost", pid: 100, pm2_env: { pm_out_log_path: "one.log" } },
+    { pm_id: 2, name: "yconhost", pid: 200, pm2_env: { pm_out_log_path: "two.log" } }
+  ]));
+  expect(entries.map((item) => item.name)).toEqual(["yconhost", "yconhost"]);
+  expect(entries.map((item) => item.key)).toEqual(["1", "2"]);
+  expect(entries.map((item) => item.description)).toEqual(["PM2 ID: 1", "PM2 ID: 2"]);
+  expect(entries.map((item) => item.values.stdout)).toEqual(["one.log", "two.log"]);
+});

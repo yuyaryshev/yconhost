@@ -362,12 +362,10 @@ export class FolderService {
   private validateItems(value: unknown, capabilities: FolderCapabilities): FolderItem[] {
     if (!Array.isArray(value) || value.length > 10000) throw new Error("list must return an array of at most 10000 entries");
     const keys = new Map<string, string>();
-    const names = new Set<string>();
     for (const item of value as FolderItem[]) {
       if (!item || typeof item.key !== "string" || !item.key || typeof item.name !== "string" || !item.name.trim()) throw new Error("Each folder entry needs string key and name");
-      if (names.has(item.name)) throw new Error(`Duplicate folder entry name ${JSON.stringify(item.name)}. Give source entries different names; the previous console list was retained.`);
       if (keys.has(item.key)) throw new Error(`Duplicate folder entry key ${JSON.stringify(item.key)} in ${JSON.stringify(keys.get(item.key))} and ${JSON.stringify(item.name)}. Use unique session IDs/keys; the previous console list was retained.`);
-      keys.set(item.key, item.name); names.add(item.name);
+      keys.set(item.key, item.name);
       for (const field of ["command", "cwd", "shell", "description", "background", "pinned_text"] as const) if (item[field] !== undefined && typeof item[field] !== "string") throw new Error(`Invalid entry ${field}`);
       if (item.pinned_text && item.pinned_text.length > 65536) throw new Error("pinned_text exceeds 64 KiB");
       if (item.args !== undefined && (!Array.isArray(item.args) || item.args.some((arg) => typeof arg !== "string"))) throw new Error("Invalid entry args");

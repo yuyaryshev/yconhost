@@ -745,6 +745,7 @@ function ProjectHeader({
   const [open, setOpen] = useState(false);
 
   return (
+    <>
     <div className="project-header">
       <button className="project-collapse-button" onClick={onToggleCollapsed} aria-label={`${collapsed ? "Expand" : "Collapse"} ${project}`}>
         <span>{collapsed ? ">" : "v"}</span>
@@ -775,8 +776,12 @@ function ProjectHeader({
           </div>
         ) : null}
       </div>
-      {error ? <div className="folder-source-error" role="alert">Source error: {error}</div> : null}
     </div>
+    {error ? <div className="folder-source-error" role="alert" aria-label={`Source error in ${project}`}>
+      <strong>{project}: source error</strong>
+      <div>{error}</div>
+    </div> : null}
+    </>
   );
 }
 

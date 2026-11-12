@@ -55,6 +55,18 @@ describe("agent context import", () => {
     expect(fs.readFileSync(contextsPath, "utf8")).toBe(before);
   });
 
+  it.each(["", "existing-session"])("always includes both bypass flags when adding a Codex context: %j", (session_id) => {
+    fs.writeFileSync(contextsPath, "");
+    const source = createCodexFolder({ contextsPath, defaultCwd: dir });
+    source.create({}, { name: "Added", cwd: dir, session_id });
+    const command = source.list()[0].command;
+    expect(command).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(command).toContain("--bypass-safety-y");
+    expect(command.match(/--dangerously-bypass-approvals-and-sandbox/g)).toHaveLength(1);
+    if (session_id) expect(command).toContain(`resume ${session_id}`);
+    else expect(command).not.toContain("resume");
+  });
+
   it("does not overwrite concurrent Markdown edits during new and reports the allocated ID for recovery", async () => {
     fs.writeFileSync(contextsPath, "");
     const id = "01234567-1234-7123-8123-0123456789ab";
