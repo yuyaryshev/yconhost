@@ -5,7 +5,10 @@ export const standardColors: Record<string, readonly [number, number, number]> =
 
 export const terminalColorPresets = {
   CLI_BLACK: "#000000", CLI_RED: "#320000", CLI_GREEN: "#003200", CLI_BLUE: "#000032",
-  CLI_YELLOW: "#323200", CLI_CYAN: "#003232", CLI_MAGENTA: "#320032", CLI_WHITE: "#323232"
+  CLI_YELLOW: "#323200", CLI_CYAN: "#003232", CLI_MAGENTA: "#320032", CLI_WHITE: "#323232",
+  CLI_ORANGE: "#321900", CLI_LIME: "#193200", CLI_TEAL: "#003219", CLI_AZURE: "#001932",
+  CLI_VIOLET: "#190032", CLI_ROSE: "#320019", CLI_SALMON: "#321919", CLI_MINT: "#193219",
+  CLI_PERIWINKLE: "#191932", CLI_SKY: "#193232", CLI_LAVENDER: "#321932", CLI_PALE_YELLOW: "#323219"
 } as const;
 
 export function colorRgb(value: string, theme: "dark" | "light" = "dark"): [number, number, number] | undefined {
