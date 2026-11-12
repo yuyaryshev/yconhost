@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import type { IPty } from "node-pty";
 import { NativeControl } from "./nativeControl.js";
+import { ptyArguments } from "./ptyArguments.js";
 import type { NativeWindowState } from "./types.js";
 import type { NativeStartRequest, NativeWorkerRequest, NativeWorkerResponse } from "./nativeProtocol.js";
 
@@ -76,7 +77,7 @@ async function start(message: NativeStartRequest): Promise<void> {
   // Only the host inherits the pipe ID; do not pass it to nested shells/ConPTY consumers.
   const env = { ...message.options.env };
   delete env.YOPENCONSOLE_PIPE_ID;
-  terminal = pty.spawn(message.shell, message.args, {
+  terminal = pty.spawn(message.shell, ptyArguments(message.shell, message.args), {
     cwd: message.options.cwd, env, ...browserSize, name: "xterm-256color", useConpty: true, useConptyDll: true
   });
   terminal.onData((data) => send({ type: "data", data }));

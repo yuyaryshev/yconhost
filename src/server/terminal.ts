@@ -8,6 +8,7 @@ import treeKill from "tree-kill";
 import type { AppSettings, ConsoleCreateRequest, NativeWindowState } from "./types.js";
 import type { RuntimeRun, TerminalScreen, OutputPosition } from "./runtimeProtocol.js";
 import { spawnNativeTerminal } from "./nativeTerminal.js";
+import { ptyArguments } from "./ptyArguments.js";
 
 export interface TerminalOptions {
   consoleId?: string;
@@ -54,7 +55,7 @@ export class PtyTerminalFactory implements TerminalFactory {
   spawn(shell: string, args: string[], options: TerminalOptions): TerminalSession {
     if (options.host === "yopenconsole") return spawnNativeTerminal(shell, args, { ...options, env: buildTerminalEnv(options.env) });
     prepareConptyRuntime();
-    const term = pty.spawn(shell, args, {
+    const term = pty.spawn(shell, ptyArguments(shell, args), {
       cwd: options.cwd,
       env: buildTerminalEnv(options.env),
       cols: options.cols,
