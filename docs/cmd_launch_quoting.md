@@ -21,3 +21,10 @@ For a running yopenconsole host, newly started sessions load the updated worker
 from disk; terminal host and unrelated sessions do not need to restart. Standard
 ConPTY code is loaded in the host itself and takes effect on its next planned
 restart. Restart only the affected failed shell after rebuilding, not all sessions.
+
+Verified 2026-11-12: typecheck/build and all 141 tests (23 files) pass. After
+building, only `symcode_lite_goal` was restarted through its existing HTTP API.
+Its live WebSocket snapshot shows the resumed Codex TUI, the expected working
+directory, session ID and YOLO permissions. Two other running consoles retained
+their PIDs. Neither the HTTP server nor terminal host needed a restart; no PM2
+recovery operations or source Markdown edits were performed.
