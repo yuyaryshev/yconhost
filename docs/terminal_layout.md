@@ -68,6 +68,14 @@ Large-project lists have a reversible end-of-list button: Show all switches to
 Свернуть компактно while expanded. Collapsing clears the search and restores the
 nine most recent launches; project collapse still resets expansion as before.
 
+2026-11-23: live consoles (`starting`, `running`, `ready`) are always first in
+each project's list, in their original source order. Compact mode never hides
+live consoles, including when more than nine are running or timestamps are
+missing. Recent stopped consoles fill any remaining places up to nine total
+rows. Small and expanded lists also put live consoles first; stopped entries
+retain source order there. Search still filters all slots, with live matches
+first. Expanding/collapsing the list never changes which live entries are visible.
+
 Verification: all 53 tests and the production build passed. Chrome verified
 Touch mode defaults on, false survives reload, and enabling restores 42px headers
 and 40px rows. Compact measurements were 21px headers and 24px rows/search fields,
