@@ -76,6 +76,15 @@ rows. Small and expanded lists also put live consoles first; stopped entries
 retain source order there. Search still filters all slots, with live matches
 first. Expanding/collapsing the list never changes which live entries are visible.
 
+Verified 2026-11-23: six selector tests and production build/typecheck passed.
+Browser checks with 20 fixture slots and 15 live consoles covered compact and
+expanded lists, collapsing back, search, status transitions and desktop/mobile
+viewports (1440x1000 and 390x844). Fixture HTTP/WebSocket data stayed inside the
+test browser; no real sessions were created or changed. Client assets were
+updated on 4011 without restarting HTTP, terminal host or user consoles.
+Screenshots: `output/playwright/running-list-desktop.png` and
+`output/playwright/running-list-mobile.png`.
+
 Verification: all 53 tests and the production build passed. Chrome verified
 Touch mode defaults on, false survives reload, and enabling restores 42px headers
 and 40px rows. Compact measurements were 21px headers and 24px rows/search fields,
