@@ -30,6 +30,8 @@
     "express": "^5.1.0",
     "json5": "^2.2.3",
     "node-pty": "1.1.0",
+    "pm2-axon": "4.0.1",
+    "pm2-axon-rpc": "0.7.1",
     "react": "^19.1.1",
     "react-colorful": "5.8.1",
     "react-dom": "^19.1.1",

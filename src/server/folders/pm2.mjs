@@ -1,21 +1,14 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
+import { Pm2Monitor } from "./pm2Client.mjs";
 
-const execute = promisify(execFile);
+const monitor = new Pm2Monitor();
 
 export async function list() {
-  const executable = process.platform === "win32" ? "cmd.exe" : "pm2";
-  const args = process.platform === "win32" ? ["/d", "/s", "/c", "pm2 jlist"] : ["jlist"];
-  const { stdout } = await execute(executable, args, { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 10 * 1024 * 1024 });
-  return parseProcessList(stdout);
+  return processDefinitions(await monitor.list());
 }
 
-export function parseProcessList(stdout) {
-  const start = stdout.search(/^\s*\[\s*(?:\{|\])/m);
-  if (start < 0) throw new Error("PM2 returned no process list");
-  const processes = JSON.parse(stdout.slice(start));
+export function processDefinitions(processes) {
   if (!Array.isArray(processes)) throw new Error("Invalid PM2 process list");
   return processes.map((item) => {
     const env = item.pm2_env ?? {};
